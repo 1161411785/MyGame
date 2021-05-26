@@ -1,0 +1,93 @@
+Using pre-set license
+
+ COMMAND LINE ARGUMENTS:
+/Users/guoyongqi/Downloads/2020.3.7f1c1/Unity.app/Contents/MacOS/Unity
+-adb2
+-batchMode
+-noUpm
+-name
+AssetImportWorker0
+-projectPath
+/Users/guoyongqi/Documents/OneDrive/UnityProject/GitHub/MyGame/MyGame1
+-logFile
+Logs/AssetImportWorker0.log
+-srvPort
+58190
+Successfully changed project path to: /Users/guoyongqi/Documents/OneDrive/UnityProject/GitHub/MyGame/MyGame1
+/Users/guoyongqi/Documents/OneDrive/UnityProject/GitHub/MyGame/MyGame1
+Using Asset Import Pipeline V2.
+Refreshing native plugins compatible for Editor in 39.45 ms, found 1 plugins.
+Preloading 0 native plugins for Editor in 0.00 ms.
+Initialize engine version: 2020.3.7f1c1 (98d1c84f5ffb)
+[Subsystems] Discovering subsystems at path /Users/guoyongqi/Downloads/2020.3.7f1c1/Unity.app/Contents/Resources/UnitySubsystems
+[Subsystems] Discovering subsystems at path /Users/guoyongqi/Documents/OneDrive/UnityProject/GitHub/MyGame/MyGame1/Assets
+GfxDevice: creating device client; threaded=0
+2021-05-27 00:48:04.025 Unity[67406:6931061] (null) preferred device: Apple M1 (high power)
+2021-05-27 00:48:04.025 Unity[67406:6931061] Metal devices available: 1
+2021-05-27 00:48:04.026 Unity[67406:6931061] 0: Apple M1 (high power)
+2021-05-27 00:48:04.026 Unity[67406:6931061] Using device Apple M1 (high power)
+Initializing Metal device caps: Apple M1
+Initialize mono
+Mono path[0] = '/Users/guoyongqi/Downloads/2020.3.7f1c1/Unity.app/Contents/Managed'
+Mono path[1] = '/Users/guoyongqi/Downloads/2020.3.7f1c1/Unity.app/Contents/MonoBleedingEdge/lib/mono/unityjit'
+Mono config path = '/Users/guoyongqi/Downloads/2020.3.7f1c1/Unity.app/Contents/MonoBleedingEdge/etc'
+Using monoOptions --debugger-agent=transport=dt_socket,embedding=1,server=y,suspend=n,address=127.0.0.1:56406
+Begin MonoManager ReloadAssembly
+Registering precompiled unity dll's ...
+Register platform support module: /Users/guoyongqi/Downloads/2020.3.7f1c1/Unity.app/Contents/PlaybackEngines/MacStandaloneSupport/UnityEditor.OSXStandalone.Extensions.dll
+Registered in 0.002040 seconds.
+Native extension for OSXStandalone target not found
+Refreshing native plugins compatible for Editor in 36.06 ms, found 1 plugins.
+Preloading 0 native plugins for Editor in 0.00 ms.
+Mono: successfully reloaded assembly
+- Completed reload, in  4.433 seconds
+Platform modules already initialized, skipping
+Registering precompiled user dll's ...
+Registered in 0.005308 seconds.
+Begin MonoManager ReloadAssembly
+Native extension for OSXStandalone target not found
+Refreshing native plugins compatible for Editor in 0.32 ms, found 1 plugins.
+Preloading 0 native plugins for Editor in 0.00 ms.
+Mono: successfully reloaded assembly
+- Completed reload, in  4.161 seconds
+Platform modules already initialized, skipping
+========================================================================
+Worker process is ready to serve import requests
+Launching external process: /Users/guoyongqi/Downloads/2020.3.7f1c1/Unity.app/Contents/Tools/UnityShaderCompiler
+Launched and connected shader compiler UnityShaderCompiler after 0.11 seconds
+Refreshing native plugins compatible for Editor in 0.41 ms, found 1 plugins.
+Preloading 0 native plugins for Editor in 0.00 ms.
+Unloading 1375 Unused Serialized files (Serialized files now loaded: 0)
+System memory in use before: 133.9 MB.
+System memory in use after: 133.9 MB.
+
+Unloading 16 unused Assets to reduce memory usage. Loaded Objects now: 1811.
+Total: 1.990042 ms (FindLiveObjects: 0.205834 ms CreateObjectMapping: 0.039042 ms MarkObjects: 1.638458 ms  DeleteObjects: 0.104583 ms)
+
+========================================================================
+Received Import Request.
+  path: Assets/NewBehaviourScript.cs
+  artifactKey: Guid(4d0b5c6d40ae448218bb95b85a0c8708) Importer(815301076,1909f56bfc062723c751e8b465ee728b)
+Start importing Assets/NewBehaviourScript.cs using Guid(4d0b5c6d40ae448218bb95b85a0c8708) Importer(815301076,1909f56bfc062723c751e8b465ee728b)  -> (artifact id: 'ead13190b186736aa82ec131b24ff108') in 1.268822 seconds
+  Import took 1.271565 seconds .
+
+========================================================================
+Received Prepare
+Registering precompiled user dll's ...
+Registered in 0.002769 seconds.
+Begin MonoManager ReloadAssembly
+Native extension for OSXStandalone target not found
+Refreshing native plugins compatible for Editor in 0.34 ms, found 1 plugins.
+Preloading 0 native plugins for Editor in 0.00 ms.
+Mono: successfully reloaded assembly
+- Completed reload, in  4.762 seconds
+Platform modules already initialized, skipping
+Refreshing native plugins compatible for Editor in 0.33 ms, found 1 plugins.
+Preloading 0 native plugins for Editor in 0.00 ms.
+Unloading 1370 Unused Serialized files (Serialized files now loaded: 0)
+System memory in use before: 138.4 MB.
+System memory in use after: 138.5 MB.
+
+Unloading 11 unused Assets to reduce memory usage. Loaded Objects now: 1814.
+Total: 1.766042 ms (FindLiveObjects: 0.167583 ms CreateObjectMapping: 0.038208 ms MarkObjects: 1.487125 ms  DeleteObjects: 0.071750 ms)
+

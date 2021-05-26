@@ -1,0 +1,4 @@
+repository "MyGame@ssl://wechat_os_qy09mdfij-jiobzutzxcirf9q@sh01-plasticscm.unity.cn:8787"
+  path "/"
+    smartbranch "/main/1161411785" 
+     

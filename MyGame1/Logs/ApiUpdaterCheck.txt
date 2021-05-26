@@ -1,0 +1,30 @@
+[api-updater (non-obsolete-error-filter)] 2021/5/23 19:04:32 : Starting /Users/guoyongqi/Downloads/2020.3.7f1c1/Unity.app/Contents/Tools/ScriptUpdater/APIUpdater.NonObsoleteApiUpdaterDetector.exe
+[api-updater (non-obsolete-error-filter)] 
+----------------------------------
+jit/startup time      : 252.601ms
+moved types parse time: 245ms
+candidates parse time : 10ms
+C# parse time         : 1101ms
+candidates check time : 545ms
+console write time    : 1ms
+
+[api-updater (non-obsolete-error-filter)] 2021/5/23 19:10:43 : Starting /Users/guoyongqi/Downloads/2020.3.7f1c1/Unity.app/Contents/Tools/ScriptUpdater/APIUpdater.NonObsoleteApiUpdaterDetector.exe
+[api-updater (non-obsolete-error-filter)] 
+----------------------------------
+jit/startup time      : 454.669ms
+moved types parse time: 172ms
+candidates parse time : 9ms
+C# parse time         : 897ms
+candidates check time : 348ms
+console write time    : 1ms
+
+[api-updater (non-obsolete-error-filter)] 2021/5/23 19:10:55 : Starting /Users/guoyongqi/Downloads/2020.3.7f1c1/Unity.app/Contents/Tools/ScriptUpdater/APIUpdater.NonObsoleteApiUpdaterDetector.exe
+[api-updater (non-obsolete-error-filter)] 
+----------------------------------
+jit/startup time      : 165.251ms
+moved types parse time: 167ms
+candidates parse time : 7ms
+C# parse time         : 672ms
+candidates check time : 283ms
+console write time    : 1ms
+

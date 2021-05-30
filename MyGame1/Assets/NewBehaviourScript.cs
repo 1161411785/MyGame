@@ -14,5 +14,7 @@ public class NewBehaviourScript : MonoBehaviour
     void Update()
     {
         print("hello world")....
+        print("hello world")....
+        
     }
 }

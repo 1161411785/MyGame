@@ -8,7 +8,7 @@ public class NewBehaviourScript : MonoBehaviour
     void Start()
     {
         print("hello world")
-        print("hello world")
+
         print("hello world")//第六次提交
     }
 

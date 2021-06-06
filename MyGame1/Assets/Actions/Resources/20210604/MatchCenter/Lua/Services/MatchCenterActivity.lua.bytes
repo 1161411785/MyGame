@@ -1,0 +1,195 @@
+require ("Common")
+require "JsonManager"
+
+
+local MatchCenterSetting = require("MatchCenterSetting")
+local MatchCenterRequestHandler = require("MatchCenterRequestHandler")
+local MatchCenterDataManager = require("MatchCenterDataManager")
+local MatchCenterTools = require("MatchCenterTools")
+local MatchCenterEvent = require("MatchCenterEvent")
+local MatchCenterReport = require("MatchCenterReport")
+
+local mt = {}
+
+function mt:New()
+    local o = {}
+    setmetatable(o, mt)
+    self.__index = self
+    return o
+end
+
+-- type
+-- 1 纯文字 2 纯图片 3 图文
+
+function mt:Init(gameObject, info)
+    self.gameObject = gameObject
+    self.transform  = self.gameObject.transform
+    self.info = info
+    self:Render(info)
+end
+
+
+function mt:Render(info)
+    if tonumber(info['announce_type']) == MatchCenterSetting.NoticeTypeWord then
+        self:SetWordTemplateContent(info)
+    elseif tonumber(info['announce_type']) == MatchCenterSetting.NoticeTypePic then
+        self:SetPicTemplateContent(info)
+    elseif tonumber(info['announce_type']) == MatchCenterSetting.NoticeTypePicWord then
+        self:SetWordAndPicTemplateContent(info)
+    end
+end
+
+
+function mt:SetWordTemplateContent(info)
+    local template = self.transform:Find("Container_templates/Container_act_template_word").gameObject
+    self.newItem =  UnityEngine.GameObject.Instantiate(template)
+    self:SetCommonData(self.newItem, info)
+end
+
+
+function mt:SetPicTemplateContent(info)
+    local template = self.transform:Find("Container_templates/Container_act_template_pic").gameObject
+    self.newItem =  UnityEngine.GameObject.Instantiate(template)
+    self.newItem.name = "Container_act_" .. info['info_id']
+    self.newItem.transform:SetParent(self.transform:Find("Container_body"), false)
+    -- self.newItem:SetActive(true)
+    --self:SetActPic(self.newItem, info)       --amz change 加载管理端图片改为本地图集
+    if tonumber(info['jump_type']) == 1 then -- 无跳转
+    elseif tonumber(info['jump_type']) == 2 then -- 有跳转
+        self.btn = self.newItem.transform:Find("Texture").gameObject:GetComponent("UIButton")
+        EventDelegate.Add(self.btn.onClick, function() self:JumpOut(info['jump_types'], info['jump_url']) end)
+    end
+end
+
+
+
+function mt:SetWordAndPicTemplateContent(info)
+    local template = self.transform:Find("Container_templates/Container_act_template_word_pic").gameObject
+    self.newItem =  UnityEngine.GameObject.Instantiate(template)
+    self:SetCommonData(self.newItem, info)
+    self:SetActPic(self.newItem, info)
+end
+
+
+
+function mt:SetCommonData(newItem, info)
+    newItem.name = "Container_act_" .. info['info_id']
+    newItem.transform:SetParent(self.transform:Find("Container_body"), false)
+    -- newItem:SetActive(true)
+    newItem.transform:Find("Label_title").gameObject:GetComponent("UILabel").text = tostring(info['announce_title'])
+    newItem.transform:Find("Scroll View/Label_content").gameObject:GetComponent("UILabel").text = tostring(info['announce_text'])
+
+    self.btnObj = newItem.transform:Find("Container_btn").gameObject
+    self.btn = self.btnObj.transform:Find("Sprite_btn"):GetComponent("UIButton")
+
+    if tonumber(info['jump_type']) == 1 then -- 无跳转
+        self.btnObj:SetActive(false)
+    elseif tonumber(info['jump_type']) == 2 then -- 有跳转
+        self.btnObj:SetActive(true)
+        self.btnObj.transform:Find("Sprite_btn/Label"):GetComponent("UILabel").text = tostring(info['button_name'])
+        EventDelegate.Add(self.btn.onClick, function() self:JumpOut(info['jump_types'], info['jump_url']) end)
+    end
+end
+
+
+function mt:SetActPic(newItem, info)
+    local url = info['announce_img']
+    if url == nil then
+        return
+    end
+    -- if not Common.IsImageCached(url) then
+    --     Common.CacheImage(url)
+    -- end
+    Common.ShowImage(MatchCenterSetting.PanelName, url, newItem.transform:Find("Texture").gameObject, false)
+end
+
+
+-- type 跳转类型
+-- 1 msdk 2游戏内 3潘多拉
+function mt:JumpOut(type, url)
+    if tonumber(type) == 1 then
+        -- MatchCenterSettings.NoticeGameShowLoading(1)
+        -- LuaTimer.Add(500, function()
+        --     MatchCenterSettings.NoticeGameShowLoading(0)
+        -- end)
+        url = self:AddUserDataToUrl(url)
+        MatchCenterSettings.NoticeGameJumpUrl(url)
+    elseif tonumber(type) == 2 then
+        local sysIds = MatchCenterTools.Split(url, "|")
+        MatchCenterSettings.NoticeGameJumpGamePanel(sysIds[1], sysIds[2])
+        EventDispatcher.DispatchEvent(MatchCenterEvent.ClosePanel)
+
+    elseif tonumber(type) == 3 then
+        local param = {}
+        param['type'] = 'open'
+        param['source'] = "MatchCenter"
+        param['content'] = tostring(url)
+        Common.CommandFromGame(JsonManager.EncodeJson(param))
+        EventDispatcher.DispatchEvent(MatchCenterEvent.ClosePanel)
+    end
+
+    MatchCenterReport.ClickNoticeJumpBtn(self.info['info_id'])
+
+end
+
+
+
+--给跳转加登录态参数
+function mt:AddUserDataToUrl(url)
+    local userData =  Common.GetUserData()
+	local tbl = {};
+    table.insert(tbl,"openid=" .. userData.sOpenId);
+    table.insert(tbl,"areaid=" .. userData.sArea);
+    table.insert(tbl,"roleid=" .. userData.sRoleId);
+    table.insert(tbl,"platid=" .. userData.sPlatID);
+    table.insert(tbl,"partition=" .. userData.sPartition);
+    table.insert(tbl,"access_token=" .. userData.sAccessToken);
+    table.insert(tbl,"acc_type=" .. userData.sAcountType);
+	table.insert(tbl,"game_app_id=" .. userData.sAppId);
+
+	local paramStr = table.concat(tbl, "&");
+	local param1, param2 = string.find(url, '?')
+
+    if param1 ~= nil and param2 ~= nil then --包含问号
+        return url .. "&" .. paramStr;
+    else
+        return url .. "?" .. paramStr;
+	end
+end
+
+
+
+
+function mt:SetActive(flag)
+    -- if not self.isRender then
+    --     self:Render()
+    --     self.isRender = true
+    -- end
+
+   
+    self.newItem:SetActive(flag)
+    local scrollView = self.newItem.transform:Find("Scroll View")
+    if scrollView ~= nil and flag then
+        scrollView:GetComponent("UIScrollView"):ResetPosition()
+    end
+
+    if flag then
+        MatchCenterReport.ShowNoticeAct(self.info['info_id'])
+    end
+end
+
+
+
+function mt:Destroy()
+    if self.btn then
+        self.btn.onClick.Clear()
+    end
+
+    -- self:RemoveEvents()
+    for k, _ in pairs(self) do
+		self[k] = nil
+    end 
+end
+
+
+return mt

@@ -1,0 +1,90 @@
+-- 轮播
+
+require "Common"
+local mt 							= {}
+
+local Logger = Common.GetLogger()
+
+
+function mt:New(o)
+	o = o or {}
+	setmetatable(o, self)
+	self.__index = self
+	return o
+end
+
+-- 初始化，需要使用的变量初始化时赋值好
+function mt:Init(gameObject)
+    self.gameObject     = gameObject
+    self.textObj        = self.gameObject.transform:Find("Label").gameObject
+    self.textCom        = self.textObj:GetComponent("UILabel")
+    self.textTween      = self.textObj:GetComponent("TweenPosition")
+    self.textTweener    = self.textObj:GetComponent("UITweener")
+    self.originX        = self.textObj.transform.localPosition.x
+    self.originY        = self.textObj.transform.localPosition.y
+    self.queue          = {}
+    self.isRunning      = false
+
+    EventDelegate.Add(self.textTweener.onFinished, function()
+        self.isRunning = false
+        self.textTweener:ResetToBeginning()
+    end)
+end
+
+-- 设置Text初始化的位置
+function mt:SetInitPosition(x, y)
+    self.originX = x
+    self.originY = y
+end
+
+
+function mt:Run()
+    if self.Timer ~= nil  then
+        return
+    end
+    self.Timer = LuaTimer.Add(0, 1000, function()
+        if not self.isRunning then
+            local text = table.remove(self.queue, 1)
+            if text then
+                self:Play(text)
+                table.insert(self.queue, text)
+            end
+        end     
+    end)
+end
+
+function mt:Play(text)
+    self.textCom.text = text
+    self.textTween.from = UnityEngine.Vector3(self.originX, self.originY, 0)
+    local screenWidth = self.gameObject:GetComponent("UIPanel").width
+    local textLength = self.textCom.printedSize.x
+    local toX = -(screenWidth - self.originX + textLength)
+    self.textTween.to = UnityEngine.Vector3(toX, self.originY, 0)
+    self.textTween.duration = (textLength/screenWidth) * 10
+    self.isRunning = true
+    self.textTweener:Play(true)
+end
+
+-- 增加轮播
+function mt:Add(text)
+    table.insert(self.queue, text)
+end
+
+-- 面板对象销毁
+-- 销毁在initPanel中声明的对象
+-- 统一声明，统一销毁，以防漏销导致内存泄漏
+
+function mt:Destroy()	
+    if self.Timer ~= nil then
+        LuaTimer.Delete(self.Timer)
+    end
+    if(self.textTweener ~=nil)then
+        self.textTweener.onFinished.Clear()
+    end
+
+	for k, _ in pairs(self) do
+		self[k] = nil
+	end 
+end
+
+return mt

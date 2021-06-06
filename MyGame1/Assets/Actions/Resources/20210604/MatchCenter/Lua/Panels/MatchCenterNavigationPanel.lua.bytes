@@ -1,0 +1,329 @@
+require "Common"
+require "JsonManager"
+require "EventDispatcher"
+
+local MatchCenterSetting         = require "MatchCenterSetting"
+local MatchCenterEvent           = require "MatchCenterEvent"
+local MatchCenterDataManager     = require "MatchCenterDataManager"
+local MatchCenterReport          = require "MatchCenterReport"
+local MatchCenterTools           = require "MatchCenterTools"
+local Logger                     = Common.GetLogger()
+local mt                         = {}
+
+local selectTabFlag=0
+
+function mt:New()
+    local o = {}
+    setmetatable(o, self)
+    self.__index = self
+    return o
+end
+
+function mt:Init(gameObject, params)
+    self.gameObject = gameObject
+    self.transform  = self.gameObject.transform
+    self.navScroll = self.transform:Find("Container_navigation/Scroll View").gameObject
+    self.grid = self.transform:Find("Container_navigation/Scroll View/Grid").gameObject
+    self.navigationTemplate  = self.transform:Find("Container_navigation/Scroll View/Grid/Container_navigation_template").gameObject
+    self.buttonFunctionMap = {}
+    self.tabs = MatchCenterDataManager.GetNav()
+
+    self.anchorLeftBot = self.transform:Find("Sprite_anchor_left")
+    self.anchorRightTop = self.transform:Find("Sprite_anchor_right")
+
+    self.jumpParams = nil
+    if params['tab'] ~= nil then
+        self.jumpParams = MatchCenterTools.Split(params['tab'], "|")
+    end
+
+    -- 初始化导航栏
+    self:InitNavigation()
+    LuaTimer.Add(1000, function()
+        self:InitScreenSize()
+    end)
+    -- 初始化选择主页
+    Common.TablePrinter(self.jumpParams, 'self.jumpparams', '11111111111');
+    if self.jumpParams == nil then
+        self:SelectTab("match")
+    else
+        self:SelectTab(self.jumpParams[1], self.jumpParams)
+    end
+
+    self:UpdateRedPoint()
+end
+
+
+function mt:InitScreenSize()
+    local left = self.anchorLeftBot.transform.localPosition
+    local right = self.anchorRightTop.transform.localPosition
+    MatchCenterDataManager.SetScreenWidth(right.x - left.x)
+    MatchCenterDataManager.SetScreenHeight(right.y - left.y)  
+end
+--------------------amz add ---------test-------
+function mt:UpdateNav(tabKey)
+    self.tabs = MatchCenterDataManager.GetNav()
+    -- 刷新导航栏（删除某个外部活动tab入口）
+    if self.grid.transform:Find("Container_navigation_"..tabKey) then
+        UnityEngine.GameObject.Destroy(self.grid.transform:Find("Container_navigation_"..tabKey).gameObject)
+        --self.grid:GetComponent("UIGrid"):Reposition()
+        -- 按sort排序
+        table.sort(self.tabs, function(a, b)
+            return tonumber(a['sort']) < tonumber(b['sort'])
+        end)
+        local index=-1
+        for key, val in pairs(self.tabs) do
+            local name = "Container_navigation_" .. tostring(val['key'])
+            index=index+1
+            --self.grid.transform:Find(name).transform.localPosition=UnityEngine.Vector3(0,-index*60,0)
+        end
+        
+    end
+end
+------------------------------------------------
+-- 初始化导航栏
+function mt:InitNavigation()
+    local noticeData = MatchCenterDataManager.GetNoticeInfo()
+    local activityInfo = MatchCenterDataManager.GetActivityInfo()
+    local matchGuessTime = activityInfo['baseInfo']['matchGuessTime']
+    for k, v in pairs(self.tabs) do
+        if #noticeData == 0 then
+            -- 无公告，不显示标签
+            if self.tabs[k]['panel'] == "Activity" then
+                table.remove(self.tabs, k)
+            end
+        end
+        ----todo 恢复  赛事竞猜时间判断
+        --if tonumber(os.time()) < tonumber(matchGuessTime[1]) or tonumber(os.time()) > tonumber(matchGuessTime[2]) then
+        --   -- 非竞猜时间不显示竞猜页签
+        --   if self.tabs[k]['panel'] == "Guess" then
+        --       table.remove(self.tabs, k)
+        --   end
+        --end
+    end   
+    -- 按sort排序
+    table.sort(self.tabs, function(a, b)
+        return tonumber(a['sort']) < tonumber(b['sort'])
+    end)
+
+    local tabLength = 0
+    local childCount = self.grid.transform.childCount
+    for key, val in pairs(self.tabs) do
+        local newTab = nil
+		tabLength = tabLength + 1
+        if childCount > tabLength then -- 创建日期栏
+            newTab = self.grid.transform:GetChild(tabLength)
+        else
+            newTab = UnityEngine.GameObject.Instantiate(self.navigationTemplate)
+        end
+        self:InitNavigationItem(newTab, key, val)
+    end
+    -- 排列
+    LuaTimer.Add(500,function()
+        self.navScroll:GetComponent("UIScrollView"):ResetPosition()
+    end)
+    self.buttonFunctionMap[self.transform:Find("Container_navigation/Sprite_close"):GetComponent("UIButton").gameObject] = function()
+        Common.PlaySound('9902')    --播放音效
+        EventDispatcher.DispatchEvent(MatchCenterEvent.ClosePanel)
+        MatchCenterSetting.NoticeOutSideActClose()
+    end
+    self:AddNavigationEventListener()
+end
+
+function mt:InitNavigationItem(itemObj, key, info)
+    itemObj.transform:SetParent(self.grid.transform, false)
+    itemObj.name = "Container_navigation_" .. tostring(info['key'])
+
+    itemObj.gameObject:SetActive(true)
+    local activeObj = itemObj.transform:Find("Container_active").gameObject
+    local unActiveObj = itemObj.transform:Find("Container_unactive").gameObject
+    activeObj.transform:Find("Label_name"):GetComponent("UILabel").text = info['name']
+    activeObj.transform:Find("Sprite_icon"):GetComponent("UISprite").spriteName = info['key'].."1"
+
+    unActiveObj.transform:Find("Label_name"):GetComponent("UILabel").text = info['name']
+    unActiveObj.transform:Find("Sprite_icon"):GetComponent("UISprite").spriteName = info['key']
+    -- if info['key'] == "playback" then
+    --     activeObj.transform:Find("Sprite_icon"):GetComponent("UISprite").width = 35
+    --     activeObj.transform:Find("Sprite_icon"):GetComponent("UISprite").height = 28
+    --     unActiveObj.transform:Find("Sprite_icon"):GetComponent("UISprite").width = 35
+    --     unActiveObj.transform:Find("Sprite_icon"):GetComponent("UISprite").height = 28
+    -- end
+    --activeObj.transform:Find("Sprite_icon"):GetComponent("UISprite"):MakePixelPerfect()
+    --unActiveObj.transform:Find("Sprite_icon"):GetComponent("UISprite"):MakePixelPerfect()
+
+    activeObj:SetActive(false)
+    unActiveObj:SetActive(false)
+    self.buttonFunctionMap[unActiveObj.transform:Find("Sprite_bg"):GetComponent("UIButton").gameObject] = function()
+        Common.PlaySound('9916')    --播放音效
+        self:SelectTab(info['key'])
+        MatchCenterReport.ClickNatigationTab(info['reportType'])
+    end
+end
+
+
+-- 选择指定的tab
+function mt:SelectTab(key, jumpParams)
+    if next(self.tabs) == nil then
+        return
+    end
+
+    --切换页签   赛事中心，赛事竞猜logo切换
+    if(key == "guess")then
+        self.transform:Find("Container_navigation/Container_bg/Sprite_title_guess").gameObject:SetActive(true)
+        self.transform:Find("Container_navigation/Container_bg/Sprite_title").gameObject:SetActive(false)
+    else
+        self.transform:Find("Container_navigation/Container_bg/Sprite_title_guess").gameObject:SetActive(false)
+        self.transform:Find("Container_navigation/Container_bg/Sprite_title").gameObject:SetActive(true)
+    end
+
+    -- 切换其他页签时关闭 大厅活动入口icon
+    if(key == "match")then
+        self.transform:Find("Container_popup/Container_actionIcon").gameObject:SetActive(true)
+    else
+        self.transform:Find("Container_popup/Container_actionIcon").gameObject:SetActive(false)
+    end
+
+    -- 关闭其他选项
+    local selectTab = nil
+    for k, v in pairs(self.tabs) do
+        if v['key'] == tostring(key) then
+            selectTab = self.tabs[k]
+        end
+        self.grid.transform:Find("Container_navigation_" .. tostring(v['key']) .. "/Container_active").gameObject:SetActive(key == v['key'])
+        self.grid.transform:Find("Container_navigation_" .. tostring(v['key']) .. "/Container_unactive").gameObject:SetActive(key ~= v['key'])
+    end
+    if selectTab == nil then
+        return
+    end
+
+    if selectTab['type'] == MatchCenterSetting.TabsJumpType.JumpToInnerPandora then
+        -- 打开面板
+        -- 通知外部活动关闭/隐藏面板
+        EventDispatcher.DispatchEvent(MatchCenterEvent.HideFromMatch)
+        Logger.ERROR("selectTab :" .. selectTab['panel'])
+        Common.TablePrinter(jumpParams, 'jumpParams', '11111111111');
+        Common.TablePrinter(selectTab, 'selectTab', '11111111111');
+        EventDispatcher.DispatchEvent(MatchCenterEvent.SwitchTab, selectTab['panel'], self.gameObject, jumpParams)
+    elseif  selectTab['type'] == MatchCenterSetting.TabsJumpType.JumpToH5 then
+        LuaTimer.Add(500, function()
+            self:SelectTab("match")
+        end)
+        EventDispatcher.DispatchEvent(MatchCenterEvent.SwitchTabToH5)
+        local url = self:AddUserDataToUrl(selectTab['url'])
+        MatchCenterSettings.NoticeGameJumpUrl(url)
+    elseif  selectTab['type'] == MatchCenterSetting.TabsJumpType.JumpToOutsidePandora then
+        -- 打开外部活动
+        -- 隐藏内部页签
+        EventDispatcher.DispatchEvent(MatchCenterEvent.HideInnerAct)
+        -------------amz add-----------这样处理会使被选中的外部活动先通知隐藏后通知打开
+        -- 通知外部活动关闭/隐藏面板
+        EventDispatcher.DispatchEvent(MatchCenterEvent.HideFromMatch)
+        -------------------------------
+        -- 通知打开外部活动
+        MatchCenterSettings.NoticeOutSideActShowPanel(selectTab['key'])
+    else
+        Logger.ERROR("tab jump type error, type :" .. tostring(selectTab['type']))    
+    end
+end
+
+
+--给跳转加登录态参数
+function mt:AddUserDataToUrl(url)
+    local userData =  Common.GetUserData()
+	local tbl = {};
+    table.insert(tbl,"openid=" .. userData.sOpenId);
+    table.insert(tbl,"areaid=" .. userData.sArea);
+    table.insert(tbl,"roleid=" .. userData.sRoleId);
+    table.insert(tbl,"platid=" .. userData.sPlatID);
+    table.insert(tbl,"partition=" .. userData.sPartition);
+    table.insert(tbl,"access_token=" .. userData.sAccessToken);
+    table.insert(tbl,"acc_type=" .. userData.sAcountType);
+	table.insert(tbl,"game_app_id=" .. userData.sAppId);
+
+	local paramStr = table.concat(tbl, "&");
+	local param1, param2 = string.find(url, '?')
+
+    if param1 ~= nil and param2 ~= nil then --包含问号
+        return url .. "&" .. paramStr;
+    else
+        return url .. "?" .. paramStr;
+	end
+end
+
+
+
+
+function mt:AddNavigationEventListener()
+    EventDispatcher.AddEventListener(MatchCenterEvent.UpdateNavigationRedPoint, self.UpdateRedPoint, self)
+    EventDispatcher.AddEventListener(MatchCenterEvent.OnNoticeMatchJump, self.JumpToMatchTab, self)
+    ----------------amz add ---------test----
+    EventDispatcher.AddEventListener(MatchCenterEvent.UpdateHideTabFromNav, self.UpdateNav, self)
+    -----------------------------------------
+
+    for button, response in pairs(self.buttonFunctionMap) do
+		if button ~= nil and button.gameObject ~= nil  and Slua.IsNull(button) == false then
+			UIEventListener.Get(button).onClick = response
+		end
+    end
+end
+
+
+function mt:RemoveNavigationEventListener()
+    EventDispatcher.RemoveEventListener(MatchCenterEvent.UpdateNavigationRedPoint, self.UpdateRedPoint)
+    EventDispatcher.RemoveEventListener(MatchCenterEvent.OnNoticeMatchJump, self.JumpToMatchTab)
+    ----------------amz add ---------test----
+    EventDispatcher.RemoveEventListener(MatchCenterEvent.UpdateHideTabFromNav, self.UpdateNav)
+    -----------------------------------------
+
+
+	for button, response in pairs(self.buttonFunctionMap) do
+		if button ~= nil and button.gameObject ~= nil  and Slua.IsNull(button) == false then
+			UIEventListener.Get(button).onClick = nil;
+		end
+	end
+	self.buttonFunctionMap = {};
+end
+
+
+
+-- 控制红点
+function mt:UpdateRedPoint()
+    -- 遍历tabs渲染
+    local mainRed = false
+    for key, val in pairs(self.tabs) do
+        if tostring(val['needRed']) == "1" then
+            local panel = val['panel']
+            local red = MatchCenterDataManager.GetNavigationRedPoint(panel)
+            Logger.ERROR("red num :" .. panel .. " :" .. red)   
+            self.grid.transform:Find("Container_navigation_" .. val['key'] .. "/Container_active/Sprite_redPoint").gameObject:SetActive(red > 0)
+            self.grid.transform:Find("Container_navigation_" .. val['key'] .. "/Container_unactive/Sprite_redPoint").gameObject:SetActive(red > 0)
+            if red > 0 then
+                mainRed =  true
+            end
+        end
+    end
+    local showMainRed = 0
+    if mainRed then
+        showMainRed = 1
+    end
+    MatchCenterSettings.NoticeGameShowRedPoint(showMainRed)
+end
+
+-- 跳转到赛事内的tab
+function mt:JumpToMatchTab(msgTable)
+    Common.TablePrinter(msgTable, '111', '222');
+
+
+    local jumpParams = nil
+    if msgTable['tab'] ~= nil then
+        jumpParams = MatchCenterTools.Split(msgTable['tab'], "|")
+    end
+    self:SelectTab(jumpParams[1], jumpParams)
+end
+
+
+function mt:Destroy()
+    self:RemoveNavigationEventListener()
+end
+
+
+return mt

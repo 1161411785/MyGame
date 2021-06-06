@@ -1,0 +1,865 @@
+require "Common"
+require "JsonManager"
+
+local MatchCenterDataManager 	= {}
+local MatchCenterTools 			= require("MatchCenterTools")
+local MatchCenterSetting 		= require("MatchCenterSetting")
+local MatchCenterEvent 			= require("MatchCenterEvent")
+local Logger 					= Common.GetLogger()
+local UserData 					= Common.GetUserData()
+
+-- 是否获取活动信息
+local isGetActivityInfo = false
+
+-- 房间信息
+local roomInfo = {}
+
+--------------------- 活动基本信息相关----------------------------
+
+-- activityInfo.baseInfo    活动基本信息
+-- activityInfo.extendInfo  赛事基本配置
+-- activityInfo.extendInfo.magnify_num 
+-- activityInfo.extendInfo.start_num 
+-- activityInfo.extendInfo.magnify_num 
+-- activityInfo.extendInfo.is_open_barrage  是否开启弹幕  1:开 0:关
+
+
+-- activityInfo.contestList 母赛事列表
+
+local activityInfo = {}
+
+function MatchCenterDataManager.IsGetActivityInfo()
+    return isGetActivityInfo
+end
+
+-- 更新活动信息
+function MatchCenterDataManager.UpdateActivityInfo(data)
+    activityInfo = data
+    isGetActivityInfo = true
+end
+
+-- 获取服务器时间
+function MatchCenterDataManager.UpdateServerTime(timestamp,isDispatch)
+	activityInfo["timestamp"] = timestamp
+	activityInfo["differenceTime"] = tonumber(timestamp) - os.time()
+	if activityInfo["differenceTime"] <= 5 or activityInfo["differenceTime"] >= -5 then
+		activityInfo["differenceTime"] = 0
+	end
+	if isDispatch then
+		EventDispatcher.DispatchEvent(MatchCenterEvent.UpdateServerTime)
+	end
+end
+
+function MatchCenterDataManager.GetActivityInfo()
+    return activityInfo
+end
+
+-- 获取当前的赛事ID
+function MatchCenterDataManager.GetCurMatchId()
+	if activityInfo['baseInfo']['matchId'] ~= nil then
+		return activityInfo['baseInfo']['matchId']
+	else
+		return 0
+	end
+end
+
+function MatchCenterDataManager.GetAnchorIdAndLivePlatId()
+	------------------------amz add----------------------------
+	local currentTime=os.time()
+	if tonumber(activityInfo['extendInfo']['studio_timing_start_time'])~=nil and tonumber(activityInfo['extendInfo']['studio_timing_end_time'])~=nil then
+		if currentTime>= tonumber(activityInfo['extendInfo']['studio_timing_start_time']) and currentTime<= tonumber(activityInfo['extendInfo']['studio_timing_end_time']) then
+			if activityInfo['extendInfo']['room_timing'] ~= nil and activityInfo['extendInfo']['studio_timing'] ~= nil then
+				return activityInfo['extendInfo']['room_timing'], activityInfo['extendInfo']['studio_timing']
+			else
+				Logger.DEBUG("activity info error")
+				--return 0, 0
+			end
+		end
+	end
+	------------------------------------------------------------
+    if activityInfo['extendInfo']['room'] ~= nil and activityInfo['extendInfo']['studio'] ~= nil then
+        return activityInfo['extendInfo']['room'], activityInfo['extendInfo']['studio']
+    else
+        Logger.DEBUG("activity info error")
+        return 0, 0
+	end
+end
+
+function MatchCenterDataManager.GetContestIds()
+    if activityInfo['contestList'] == nil or #activityInfo['contestList'] == 0 then
+        return {}
+    end
+    local ids = {}
+    for k, v in pairs(activityInfo['contestList']) do 
+        table.insert(ids, activityInfo['contestList'][k]['contest_id'])
+    end
+    return ids
+end
+
+
+-- 弹幕功能是否开启
+function MatchCenterDataManager.IsAllowBullet()
+	if activityInfo ~= nil and activityInfo.extendInfo ~= nil and activityInfo.extendInfo.is_open_barrage ~= nil then
+		if tostring(activityInfo.extendInfo.is_open_barrage) == "0" then
+			return false;
+		end
+	end
+	return true
+end
+
+--------------------------赛程相关-----------------------------
+
+local scheduleInfo = {}
+
+
+function MatchCenterDataManager.GetScheduleInfo()
+    return scheduleInfo
+end
+
+function MatchCenterDataManager.UpdateScheduleInfo(data)
+    scheduleInfo = data
+end
+
+-- 赛事数据和选手排行数据
+local matchData = {}
+function MatchCenterDataManager.GetMatchData()
+    return matchData
+end
+
+function MatchCenterDataManager.UpdateMatchData(data)
+    matchData = data
+end
+
+--------------------amz add---------------
+--add管理端配置赛事进程图片
+function MatchCenterDataManager.GetScheduleImage()
+	if activityInfo['extendInfo']['progress_img'] ~= nil and activityInfo['extendInfo']['progress_img'] ~= "" then
+
+		return activityInfo['extendInfo']['progress_img']
+	else
+		return nil
+	end
+end
+--add管理端配置赛事进程图片埋点，默认在第几屏
+function MatchCenterDataManager.GetScheduleImageSite()
+	if tonumber(activityInfo['extendInfo']['site_on_picture']) ~= nil then
+
+		return tonumber(activityInfo['extendInfo']['site_on_picture'])
+	else
+		return 0
+	end
+end
+
+------------------------------------------
+--------------------------任务相关-----------------------------
+
+
+local taskInfo = {}
+local redPoint = 0
+local isGetTaskInfo = false
+
+function MatchCenterDataManager.GetTaskInfo()
+    return taskInfo
+end
+
+function MatchCenterDataManager.UpdateTaskInfo(data)
+    if data ~= nil then
+        taskInfo = data
+        isGetTaskInfo = true
+    end
+end
+
+function MatchCenterDataManager.IsGetTaskInfo()
+    return isGetTaskInfo
+end
+
+function MatchCenterDataManager.GetTaskRedPoint()
+    return redPoint
+end
+
+function MatchCenterDataManager.UpdateTaskRedPoint(data)
+    redPoint = data
+end
+--------------------------弹幕相关-------------------------------
+local isBulletOn = true
+
+-- 弹幕是否开启
+function MatchCenterDataManager.IsBulletOn()
+    return isBulletOn
+end
+-- 弹幕开关
+function MatchCenterDataManager.SetBulletOn(value)
+    isBulletOn = value
+end
+
+----------------amz add 精简弹幕---------------------------------
+local isSimpleBulletOn = false
+
+-- 弹幕是否开启
+function MatchCenterDataManager.IsSimpleBulletOn()
+    return isSimpleBulletOn
+end
+-- 弹幕开关
+function MatchCenterDataManager.SetSimpleBulletOn(value)
+    isSimpleBulletOn = value
+end
+----------------------------------------------------------------
+
+----------------------------主播房间相关--------------------------
+local roomInfo  = {}
+local playInfo  = {}
+local viewPeople = 0
+local isGetRoomInfo = false
+local definition = 3   --视频清晰度 1:超清 2:高清 3:标清
+local streamType = 'flvUrl'
+
+function MatchCenterDataManager.UpdateRoomInfo(data)
+    playInfo = data['playInfo']
+	roomInfo = data['roomInfo']
+	isGetRoomInfo = true
+	if playInfo['streamInfo'] ~= nil then
+		definition = #playInfo['streamInfo'] --默认选清晰度最低的
+	end
+	--------------------amz add---------
+	EventDispatcher.DispatchEvent(MatchCenterEvent.HasRefreshRoomInfo)
+	-----------------------------------
+end
+
+
+function MatchCenterDataManager.SetVideoDefinition(newDefinition)
+	definition = newDefinition
+end
+
+function MatchCenterDataManager.UpdateViewPeople(num)
+    if activityInfo['extendInfo']['magnify_num'] ~= nil and activityInfo['extendInfo']['start_num'] ~= nil then
+        viewPeople = tonumber(activityInfo['extendInfo']['start_num']) + tonumber(activityInfo['extendInfo']['magnify_num']) * tonumber(num)
+    else
+        viewPeople = num
+    end
+end
+
+function MatchCenterDataManager.GetViewPeople()
+    return viewPeople
+end
+
+---------------------------------amz add-----------------------------------
+--add管理端配置直播间标题
+function MatchCenterDataManager.GetVideoTitle()
+	if activityInfo['extendInfo']['studio_title'] ~= nil and activityInfo['extendInfo']['studio_title'] ~= "" then
+		return tostring(activityInfo['extendInfo']['studio_title'])
+	else
+		return nil
+	end
+end
+
+--add管理端配置直播状态 直播：status=1，true  录播：status=2，false
+function MatchCenterDataManager.IsLiveStatus()
+	if tonumber(activityInfo['extendInfo']['studio_status']) ~= nil then
+		if tonumber(activityInfo['extendInfo']['studio_status']) == 1 then
+			return true
+		else
+			return false
+		end
+	else
+		return false
+	end
+end
+
+--add管理端配置定时直播房间号和直播平台   test
+function MatchCenterDataManager.GetTimingAnchorIdAndLivePlatId()
+    if activityInfo['extendInfo']['room_timing'] ~= nil and activityInfo['extendInfo']['studio_timing'] ~= nil then
+        return activityInfo['extendInfo']['room_timing'], activityInfo['extendInfo']['studio_timing']
+    else
+        Logger.DEBUG("activity info error")
+        return 0, 0
+    end
+end
+
+--add管理端配置定时直播间标题
+function MatchCenterDataManager.GetTimingVideoTitle()
+	if activityInfo['extendInfo']['studio_timing_title'] ~= nil and activityInfo['extendInfo']['studio_timing_title'] ~= "" then
+		return tostring(activityInfo['extendInfo']['studio_timing_title'])
+	else
+		return nil
+	end
+end
+
+--add管理端配置定时直播开始、结束时间
+function MatchCenterDataManager.GetTimingVideoTime()
+	if  tonumber(activityInfo['extendInfo']['studio_timing_start_time']) ~= nil 
+	and tonumber(activityInfo['extendInfo']['studio_timing_end_time']) ~= nil  then
+		return tonumber(activityInfo['extendInfo']['studio_timing_start_time']),tonumber(activityInfo['extendInfo']['studio_timing_end_time'])
+	else
+		Logger.DEBUG("activity info error")
+		return 0,0
+	end
+end
+
+--add判断当前是否为定时直播时间 是定时直播：true,非定时：false
+function MatchCenterDataManager.IsTimingVideoTime()
+	if tonumber(activityInfo['extendInfo']['studio_timing_start_time']) ~= nil
+	and tonumber(activityInfo['extendInfo']['studio_timing_end_time']) ~= nil then
+		local currentTime=os.time() 
+		if currentTime>=tonumber(activityInfo['extendInfo']['studio_timing_start_time']) 
+		and currentTime<=tonumber(activityInfo['extendInfo']['studio_timing_end_time']) then
+			return true
+		else
+			return false
+		end
+	else
+		Logger.DEBUG("activity info error")
+		return false
+	end
+end
+
+--获取当前游戏版本号
+function MatchCenterDataManager.GetGameVer()
+	local sGameVer=UserData.sGameVer
+	Logger.DEBUG("##################"..tostring(sGameVer))
+	return sGameVer
+end
+--------------------------粉丝包厢相关-----------------------------
+
+
+local boxPlayerInfo = {}
+local isGetBoxPlayerInfo = false
+local boxBindId=nil
+local HasBindBox=false
+
+function MatchCenterDataManager.GetBoxPlayerInfo()
+    return boxPlayerInfo
+end
+
+function MatchCenterDataManager.UpdateBoxPlayerInfo(data)
+    if data ~= nil then
+        boxPlayerInfo = data
+        isGetBoxPlayerInfo = true
+    end
+end
+
+function MatchCenterDataManager.IsGetBoxPlayerInfo()
+    return isGetBoxPlayerInfo
+end
+
+function MatchCenterDataManager.GetBoxBindId()
+    return boxBindId
+end
+
+function MatchCenterDataManager.UpdateBoxBindId(bindId)
+	Logger.DEBUG("***********309*******"..tostring(bindId))
+    if bindId ~= nil then
+		boxBindId = bindId
+		HasBindBox = true
+	else
+		boxBindId = nil
+		HasBindBox = false
+    end
+end
+
+function MatchCenterDataManager.IsHasBindBox()
+    return HasBindBox
+end
+
+
+--------------------------------------------------------------------------
+function MatchCenterDataManager.GetRoomInfo()
+    local data = {}
+    data['playInfo'] = playInfo['streamInfo']
+    data['roomInfo'] = roomInfo
+    data['viewPeople'] = viewPeople
+    return data
+end
+
+function MatchCenterDataManager.GetPlayUrl()
+	if playInfo ~= nil and playInfo['streamInfo'] ~= nil and playInfo['streamInfo'][definition] ~= nil then
+		streamType = activityInfo['baseInfo']['streamFormat']
+		if streamType == 'flv' then
+			if playInfo['streamInfo'][definition]['flvUrl'] ~= nil then
+				return playInfo['streamInfo'][definition]['flvUrl']
+			end
+		end
+		return playInfo['streamInfo'][definition]['hlsUrl']
+	else
+		return nil
+	end
+end
+
+
+function MatchCenterDataManager.GetStreamInfo()
+	if playInfo ~= nil and playInfo['streamInfo'] ~= nil then
+		return playInfo['streamInfo']
+	else
+		return nil
+	end
+end
+
+function MatchCenterDataManager.GetDefinition()
+	return definition
+end
+
+function MatchCenterDataManager.IsGetRoomInfo()
+    return isGetRoomInfo
+end
+
+
+----------------------- 用户信息有关---------------
+
+
+local userInfo = {}
+
+
+function MatchCenterDataManager.SetUserInfo(data)
+    userInfo = data
+end
+
+function MatchCenterDataManager.GetNickName()
+    if userInfo.nickName ~= nil then
+        return userInfo.nickName
+    else
+		return "忍者学员" .. string.sub (os.time(), -4)
+    end
+   
+end
+
+function MatchCenterDataManager.GetUserLevel()
+    if userInfo.level ~= nil then
+        return userInfo.level
+    else
+        return 0
+    end
+end
+
+function MatchCenterDataManager.GetHeadPic()
+	if userInfo.headUrl ~= nil then
+		return userInfo.headUrl
+	else
+		return "https://game.gtimg.cn/images/hyrz/cp/a20190821rzxt/icon.png"
+	end
+end
+
+-----------------------公告中心----------------------
+
+local noticeActInfo = {}
+local isGetNoticeInfo = false
+local noticeCookieName = "MatchCenter_notice_" .. UserData.sRoleId
+
+
+function MatchCenterDataManager.UpdateNoticeInfo(data)
+    noticeActInfo = data
+    isGetNoticeInfo = true
+end
+
+function MatchCenterDataManager.IsGetNoticeInfo()
+    return isGetNoticeInfo
+end
+
+function MatchCenterDataManager.GetNoticeInfo()
+    return noticeActInfo
+end
+
+
+
+local function WriteCookie(tbl)
+	local str = JsonManager.EncodeJson(tbl);
+	Common.WriteCookie(noticeCookieName, str);
+end
+
+
+local function ReadCookie()
+	return Common.ReadCookie(noticeCookieName)
+end
+
+-- cookie中无本活动时调用
+local function NewCookie(info)
+	local temp = {}
+	temp.id = tostring(info['info_id'])
+	temp.type = tostring(info['redPoint'])
+	if tonumber(info['redPoint']) == MatchCenterSetting.NoticeRedPointTypeDaily then
+		temp.expireTime = tostring(MatchCenterTools.GetTodayLastTime())
+	elseif tonumber(info['redPoint']) == MatchCenterSetting.NoticeRedPointTypeOnce then
+		temp.expireTime = tostring(info['act_end_time'])
+	end
+	temp.status = tostring(MatchCenterSetting.NoticeRedPointStatusUnread)
+	return temp
+end
+
+
+-- 获取红点状态
+function MatchCenterDataManager.GetNoticeRedPoint(info)
+	-- local curTime = 1588073801
+	local curTime = os.time()
+	local cookies = ReadCookie()
+	if cookies == nil or cookies == "" then
+		-- 无文件，创建
+		cookies = {}
+		local temp = NewCookie(info)
+		cookies[temp['id']] = temp
+		WriteCookie(cookies)
+		return temp.status
+	else
+		-- 有文件，读取
+		cookies = JsonManager.DecodeJson(cookies)
+		-- 无此活动
+		if cookies[tostring(info['info_id'])] == nil then
+			local temp = NewCookie(info)
+			cookies[temp['id']] = temp
+			WriteCookie(cookies)
+			return temp.status
+		else
+			local actCookie = cookies[info['info_id']]
+			-- 有此活动
+			-- 活动类型是否有变更
+			if actCookie['type'] == tostring(info['redPoint']) then
+				if tonumber(actCookie['type']) == MatchCenterSetting.NoticeRedPointTypeDaily then
+					if tostring(curTime) > actCookie['expireTime'] then -- 过期
+						actCookie['expireTime'] = 	tostring(MatchCenterTools.GetTodayLastTime())
+						actCookie['status'] = tostring(MatchCenterSetting.NoticeRedPointStatusUnread)
+						cookies[info['info_id']] = actCookie
+						WriteCookie(cookies)
+					end
+					return actCookie['status']
+				elseif tonumber(actCookie['type']) == MatchCenterSetting.NoticeRedPointTypeOnce then
+					if tostring(curTime) > actCookie['expireTime'] then -- 过期
+						actCookie['status'] = tostring(MatchCenterSetting.NoticeRedPointStatusRead)		
+						cookies[info['info_id']] = actCookie
+						WriteCookie(cookies)
+					end
+					return actCookie['status']
+				end
+			else -- 红点类型有变更,产品在活动期间改了配置
+				
+				if tonumber(actCookie['type']) == MatchCenterSetting.NoticeRedPointTypeDaily then
+					-- 每日更新 -> 活动期间
+					actCookie['expireTime'] = 	tostring(info['act_end_time'])
+					actCookie['status'] = tostring(MatchCenterSetting.NoticeRedPointStatusUnread)
+					actCookie['type'] = tostring(info['redPoint'])
+					cookies[info['info_id']] = actCookie
+					WriteCookie(cookies)
+					return actCookie['status']	
+				elseif tonumber(actCookie['type']) == MatchCenterSetting.NoticeRedPointTypeOnce then
+					-- 活动期间更新 -> 每日更新
+					actCookie['expireTime'] = 	tostring(MatchCenterTools.GetTodayLastTime())
+					actCookie['status'] = tostring(MatchCenterSetting.NoticeRedPointStatusUnread)
+					actCookie['type'] = tostring(info['redPoint'])
+					cookies[info['info_id']] = actCookie
+					WriteCookie(cookies)
+					return actCookie['status']
+				end
+			end
+		end
+	end
+
+end
+
+
+-- 设置红点状态
+function MatchCenterDataManager.SetNoticeRedPoint(id, status)
+	id = tostring(id)
+	local cookies = ReadCookie()
+	if cookies == nil or cookies == "" then
+		return false
+	end
+	cookies = JsonManager.DecodeJson(cookies)
+	if cookies[id] == nil then
+		return false
+	end
+	local actCookie = cookies[id]
+	if actCookie['status'] ~= tostring(status) then
+		actCookie['status'] = tostring(status)
+		cookies[id] = actCookie
+        WriteCookie(cookies)
+        return true
+    else
+        return false
+    end
+end
+
+
+
+
+-------------------------红点相关-----------------------
+local redPointMatchLottery = 0
+local redPointActivity = 0  -- 赛事活动红点
+local redPointGuess = 0     -- 竞猜中心红点
+
+
+-- 外部活动专用红点集合，用于导航栏展示
+local redPointOutSideAct = {}
+
+
+-- 目前大厅只有任务和抽奖，使用任务红点数据+抽奖
+function MatchCenterDataManager.GetNavigationRedPoint(name)
+    if name == "Match" then
+        return redPoint + redPointMatchLottery
+    elseif name == "Activity" then
+        return redPointActivity
+	elseif name == "Guess" then
+		return redPointGuess
+	elseif redPointOutSideAct[name] ~= nil then
+		return tonumber(redPointOutSideAct[name])
+	else
+        return 0
+    end
+end
+
+
+function MatchCenterDataManager.SetActivityRedPoint(num)
+    redPointActivity = num
+end
+
+function MatchCenterDataManager.GetActivityRedPoint()
+    return redPointActivity
+end
+
+-- 竞猜红点
+function MatchCenterDataManager.SetGuessRedPoint(num)
+	redPointGuess = num
+end
+
+function MatchCenterDataManager.GetGuessRedPoint()
+	return redPointGuess
+end
+
+-----------------------屏幕占比---------------------
+
+local screenWidth = 1136
+local screenHeight = 640
+
+function MatchCenterDataManager.SetScreenWidth(width)
+	screenWidth = width
+end
+
+function MatchCenterDataManager.SetScreenHeight(height)
+	screenHeight = height
+end
+
+function MatchCenterDataManager.GetScreenWidth()
+	return screenWidth
+end
+
+function MatchCenterDataManager.GetScreenHeight()
+	return screenHeight
+end
+
+---------------赛事开奖模块------------------
+local matchLotteryInfo = {}
+matchLotteryInfo.showEntrance = false
+matchLotteryInfo.showEntranceRedPoint = false
+--matchLotteryInfo.entranceStatus = 1   -- 1 预约 2 开奖中 3已开奖
+
+function MatchCenterDataManager.GetMatchLotteryInfo()
+	return matchLotteryInfo
+end
+
+-- 根据收到的协议设置开奖入口
+function MatchCenterDataManager.SetMatchLotteryInfoByNotice(msgTable)
+	if msgTable['type'] == "noticeMatchLottery" then
+		if msgTable['module'] == "entrance" then
+			matchLotteryInfo.showEntrance = (tostring(msgTable['content']) == "1")
+			-- 如果入口不显示，也不显示红点
+			if tostring(msgTable['content']) == "0" then
+				redPointMatchLottery = 0
+			end
+		elseif msgTable['module'] == "entranceRedPoint" then
+			matchLotteryInfo.showEntranceRedPoint = (tostring(msgTable['content']) == "1")
+			if tostring(msgTable['content']) == "1" then
+				redPointMatchLottery = 1
+			else
+				redPointMatchLottery = 0
+			end
+		-- elseif msgTable['module'] == "entranceStatus" then
+		-- 	matchLotteryInfo.entranceStatus = tonumber(msgTable['content'])
+		end
+	end
+end
+
+
+
+
+---------------------菜单栏相关---------------------
+-- 导航页签配置
+local NavTabs = {
+    {
+        ["name"] = "直播",
+        ["key"] = "match",
+        ["panel"] = "Match",
+        ["type"] = MatchCenterSetting.TabsJumpType.JumpToInnerPandora,
+        ["sort"] = "1",
+        ["url"]  = "",
+        ["needRed"] = "1",
+        ["reportType"] = 11, -- 上报类型
+    },
+	{
+        ["name"] = "选手",
+        ["key"] = "player",
+        ["panel"] = "Player",
+        ["type"] =  MatchCenterSetting.TabsJumpType.JumpToInnerPandora, -- 1 跳转潘多拉  2跳转H5
+        ["sort"] = "2",
+        ["url"]  = "",
+        ["needRed"] = "0",
+        ["reportType"] = 18, -- 上报类型
+    },
+    {
+        ["name"] = "回放",
+        ["key"] = "playback",
+        ["panel"] = "Playback",
+        ["type"] =  MatchCenterSetting.TabsJumpType.JumpToInnerPandora, -- 1 跳转潘多拉  2跳转H5
+        ["sort"] = "3",
+        ["url"]  = "",
+        ["needRed"] = "1",
+        ["reportType"] = 16, -- 上报类型
+    },
+	-- {
+    --     ["name"] = "赛事活动",
+    --     ["key"] = "activity",
+    --     ["panel"] = "Activity",
+    --     ["type"] =  MatchCenterSetting.TabsJumpType.JumpToInnerPandora, -- 1 跳转潘多拉  2跳转H5
+    --     ["sort"] = "97",
+    --     ["url"]  = "",
+    --     ["needRed"] = "1",
+    --     ["reportType"] = 12, -- 上报类型
+    -- },
+
+    --{
+    --    ["name"] = "赛事竞猜",
+    --    ["key"] = "guess",
+    --    ["panel"] = "Guess",
+    --    ["type"] =  MatchCenterSetting.TabsJumpType.JumpToInnerPandora, -- 1 跳转潘多拉  2跳转H5
+    --    ["sort"] = "3",
+    --    ["url"]  = "",
+    --    ["needRed"] = "1",
+    --    ["reportType"] = 12, -- 上报类型 todo test
+    --},
+    -- {
+    --     ["name"] = "战况",
+    --     ["key"] = "situation",
+    --     ["panel"] = "",
+    --     ["type"] = MatchCenterSetting.TabsJumpType.JumpToH5, -- 1 跳转潘多拉  2跳转H5
+    --     ["sort"] = "98",
+    --     ["url"]  = "https://hyrz.qq.com/ingame/a20200410wsq/event.html?tab=2",
+    --     ["needRed"] = "0",
+    --     ["reportType"] = 15, -- 上报类型
+    -- },
+    -- {
+    --     ["name"] = "选手1",
+    --     ["key"] = "player1",
+    --     ["panel"] = "",
+    --     ["type"] = MatchCenterSetting.TabsJumpType.JumpToH5, -- 1 跳转潘多拉  2跳转H5
+    --     ["sort"] = "99",
+    --     ["url"]  = "https://hyrz.qq.com/ingame/a20200410wsq/event.html?tab=4",
+    --     ["needRed"] = "0",
+    --     ["reportType"] = 16, -- 上报类型
+    -- }
+}
+
+local function isNavExist(nav)
+	for k, v in pairs(NavTabs) do
+		if v['key'] == nav['key'] then
+			return k
+		end
+	end
+	return false
+end
+
+
+function MatchCenterDataManager.GetNav()
+	return NavTabs
+end
+
+function MatchCenterDataManager.SetMatchNavByNotice(noticeTable)
+
+	-- noticeTable.info = {
+	-- 	['name'] = '测试活动1',
+	-- 	['key'] = 'test1',
+	-- 	['panel'] = 'test1',
+	-- 	['type'] = 3,
+	-- 	['sort'] = 2,
+	-- 	['url'] = '',
+	-- 	['needRed'] = 1,
+	-- 	['reportType'] = 12,
+	-- }
+
+	-- local a = JsonManager.EncodeJson(noticeTable.info)
+	-- print(a)
+	noticeTable.info = JsonManager.DecodeJson(noticeTable.info)
+	Common.TablePrinter(noticeTable.info, '1111', '222222')
+	print(noticeTable.info.name)
+	if noticeTable.module == "nav" then
+		if tonumber(noticeTable.content) == 1 then
+			if not isNavExist(noticeTable.info) then
+				table.insert(NavTabs, noticeTable.info)
+			else
+				Logger.ERROR("add repead nav")
+			end
+		elseif tonumber(noticeTable.content) == 0 then
+			local index = isNavExist(noticeTable.info)
+			if index then
+				table.remove(NavTabs, index)
+				--------------amz add---------优化隐藏协议------
+				EventDispatcher.DispatchEvent(MatchCenterEvent.UpdateHideTabFromNav,noticeTable.info['key'])
+				----------------------------------------
+			end
+		else
+		end
+	elseif noticeTable.module == "red" then
+		if tonumber(noticeTable.content) == 1 then
+			redPointOutSideAct[noticeTable.info.key] = 1
+		elseif tonumber(noticeTable.content) == 0 then
+			redPointOutSideAct[noticeTable.info.key] = 0
+		else
+			Logger.ERROR("invalid content value")
+		end
+		if EventDispatcher.HasEventListener(MatchCenterEvent.UpdateNavigationRedPoint)  then
+            EventDispatcher.DispatchEvent(MatchCenterEvent.UpdateNavigationRedPoint)
+		end
+	else
+		Logger.ERROR("undefined module")
+	end
+end
+
+-------------------amz add------------------
+-- 获取活动的全部红点信息
+function MatchCenterDataManager.GetMatchRedPoint()
+	local outActRed=MatchCenterDataManager.IsHasOutActRed()
+	if tonumber(outActRed)~=nil then
+		return redPoint + redPointMatchLottery+redPointActivity+redPointGuess+outActRed
+	else
+		return redPoint + redPointMatchLottery+redPointActivity+redPointGuess
+	end
+end
+function MatchCenterDataManager.IsHasOutActRed()
+	if next(redPointOutSideAct) then
+		for k,v in pairs(redPointOutSideAct) do
+			--Logger.DEBUG("+++++++6666 red       "..tostring(v))
+			if v==1 then
+				--Logger.DEBUG("+++++++6666 showred++++++初始化")
+				return 1
+			end
+		end
+		return 0
+	else
+		--Logger.DEBUG("+++++++++666 redPointOutSideAct is nil")
+		return 0
+	end
+end
+
+
+---------------------------------------------
+---------------初始化------------------------
+
+function MatchCenterDataManager.Clear()
+	isBulletOn = true
+	if playInfo ~= nil and playInfo['streamInfo'] ~= nil then
+		definition = #playInfo['streamInfo']
+	else
+		definition = 3
+	end
+end
+
+
+--------视频切入切出事件处理-----------
+
+MatchCenterDataManager.isHall = false
+
+
+return MatchCenterDataManager

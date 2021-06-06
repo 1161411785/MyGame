@@ -1,0 +1,1164 @@
+-- 处理播放器相关逻辑
+
+require ("Common")
+require ("JsonManager")
+local MatchCenterDataManager    = require("MatchCenterDataManager")
+local MatchCenterEvent          = require("MatchCenterEvent")
+local MatchCenterRequestHandler = require("MatchCenterRequestHandler")
+local MatchCenterSetting        = require("MatchCenterSetting")
+local MatchCenterTools          = require("MatchCenterTools")
+local MatchCenterReport         = require("MatchCenterReport")
+local MatchCenterHotWord        = require("MatchCenterHotWord")
+local CSharpInterface           = com.tencent.pandora.CSharpInterface
+local Logger                    = Common.GetLogger()
+
+-- 视频状态
+local VideoState = {
+    ["STAND_BY"]    = -1,
+    ["PLAYING"]     = 0,
+    ["PLAY_FAILED"] = 1,
+    ["CONNECTING"]  = 2,
+    ["LOADING"]     = 3
+}
+
+---当前播放状态
+local videoPlayerState = nil
+
+local mt = {}
+local bulletTempTable={}
+
+function mt:New()
+    local o = {}
+    setmetatable(o, self)
+    self.__index = self
+    return o
+end
+
+
+
+function mt:Init(gameObject)
+    self.gameObject = gameObject
+    self.transform = self.gameObject.transform
+    self:InitVideoPlayer()
+    self:AddEvents()
+    self.isPlayingBGM=true
+    self.isClickDefinition = false
+    self.isClickArea = false
+    self.isChickHot = false
+end
+
+
+-- 初始化操作
+function mt:InitVideoPlayer()
+    
+    self.objVideoScreen  = self.transform:Find("Container_mid/Container_videoScreen/Texture_video").gameObject
+  
+    self.objVideoScreenWidth = self.objVideoScreen:GetComponent("UIWidget").width
+    self.objVideoScreenHeight = self.objVideoScreen:GetComponent("UIWidget").height
+    self.buttonVideoPauseObj = self.transform:Find("Container_footer/Sprite_pause").gameObject
+    self.buttonVideoPause =  self.buttonVideoPauseObj:GetComponent("UIButton")
+    self.buttonVideoPauseMidObj = self.transform:Find("Container_mid/Container_control/Container_pause/Sprite_pause").gameObject
+    self.buttonVideoPauseMid =  self.buttonVideoPauseMidObj:GetComponent("UIButton")
+
+    self.buttonVideoPauseMid4GObj = self.transform:Find("Container_mid/Container_control/Container_pause4G/Sprite_pause").gameObject
+    self.buttonVideoPauseMid4G = self.buttonVideoPauseMid4GObj:GetComponent("UIButton")
+
+    self.buttonVideoResumeObj = self.transform:Find("Container_footer/Sprite_resume").gameObject
+    self.buttonVideoResume =    self.buttonVideoResumeObj:GetComponent("UIButton")
+
+    self.buttonVideoRefreshObj = self.transform:Find("Container_footer/Sprite_refresh").gameObject
+    self.buttonVideoRefresh =    self.buttonVideoRefreshObj:GetComponent("UIButton")
+
+    self.buttonBulletSwitchOnObj = self.transform:Find("Container_footer/Sprite_bulletSwitchOn").gameObject
+    self.buttonBulletSwitchOn = self.buttonBulletSwitchOnObj:GetComponent("UIButton")
+    self.buttonBulletSwitchOffObj = self.transform:Find("Container_footer/Sprite_bulletSwitchOff").gameObject
+    self.buttonBulletSwitchOff = self.buttonBulletSwitchOffObj:GetComponent("UIButton")
+
+    -------------amz add-------精简弹幕开关----------------
+    self.buttonSimpleBulletSwitchOnObj = self.transform:Find("Container_footer/Sprite_simpleBulletSwitchOn").gameObject
+    self.buttonSimpleBulletSwitchOn = self.buttonSimpleBulletSwitchOnObj:GetComponent("UIButton")
+    self.buttonSimpleBulletSwitchOffObj = self.transform:Find("Container_footer/Sprite_simpleBulletSwitchOff").gameObject
+    self.buttonSimpleBulletSwitchOff = self.buttonSimpleBulletSwitchOffObj:GetComponent("UIButton")
+    ------------------------------------------------------
+
+
+    self.buttonFullScreenObj = self.transform:Find("Container_footer/Sprite_fullScreen").gameObject
+    self.buttonFullScreen = self.transform:Find("Container_footer/Sprite_fullScreen"):GetComponent("UIButton")
+    
+    self.bulletScreen = self.transform:Find("Container_mid/Container_bulletScreen/Container_bulletScreen"):GetComponent("BulletScreen")
+    -- 隐藏占位的弹幕节点
+    local tempText = self.transform:Find("Container_mid/Container_bulletScreen/Text_bullet")
+    if tempText ~= nil then
+        tempText.transform.localScale = UnityEngine.Vector3(0,1,1)
+    end
+
+    self.buttonControlArea = self.transform:Find("Container_mid/Sprite_controlArea"):GetComponent("UIButton")
+
+    self.isLock = false
+
+    if self.gameObject.name == "Container_fullScreen" then
+        self.chatInputLabel = self.transform:Find("Container_footer/Container_chat/Sprite_input"):GetComponent("UILabel")
+        self.chatInput = self.transform:Find("Container_footer/Container_chat/Sprite_input"):GetComponent("UIInput")
+        self.sendButton = self.transform:Find("Container_footer/Container_chat/Sprite_send").gameObject:GetComponent("UIButton")
+        self.hotWordButton = self.transform:Find("Container_footer/Container_chat/Sprite_hotWord").gameObject:GetComponent("UIButton")
+        self.hotWordComponent = MatchCenterHotWord:New()
+        self.hotWordComponent:Init(self.transform:Find("Container_footer/Container_chat/Container_hotList").gameObject)
+
+        self.lock = self.transform:Find("Container_lock/Sprite_lock").gameObject
+        self.lockBtn = self.lock:GetComponent("UIButton")
+        self.unlock = self.transform:Find("Container_lock/Sprite_unlock").gameObject
+        self.unlockBtn = self.unlock:GetComponent("UIButton")
+        self.unlock:SetActive(true)
+    end
+    -- 视频清晰度区域
+    self:InitDefitionArea()
+
+end
+
+
+function mt:InitDefitionArea()
+
+    local streamInfo = MatchCenterDataManager.GetStreamInfo()
+    local currentDefinition = MatchCenterDataManager.GetDefinition()
+
+    self.buttonDefinitionObj = self.transform:Find("Container_footer/Sprite_definition").gameObject
+    self.buttonDefinition = self.buttonDefinitionObj:GetComponent("UIButton")
+    self.buttonDefinitionLabel = self.buttonDefinitionObj.transform:Find("Label").gameObject:GetComponent("UILabel")
+
+    self.toggleDefinitionArea = self.transform:Find("Container_mid/Container_definition/Sprite_bg").gameObject
+    --Toggle有bug，不能复制
+    self.toggleDefinitionTemplateBq = self.transform:Find("Container_mid/Container_definition/Toggle_template_bq").gameObject
+    self.toggleDefinitionTemplateGq = self.transform:Find("Container_mid/Container_definition/Toggle_template_gq").gameObject
+    self.toggleDefinitionTemplateCq = self.transform:Find("Container_mid/Container_definition/Toggle_template_cq").gameObject
+    self.toggleDefinitionGridObj = self.transform:Find("Container_mid/Container_definition/Sprite_bg/Container_toggle_group").gameObject
+    self.toggleDefinitionGrid = self.toggleDefinitionGridObj:GetComponent("UIGrid")
+
+    if streamInfo ~= nil then
+        for k, v in pairs(streamInfo) do
+            local tempalte = nil
+            if v['desc'] == "标清" then
+                tempalte = self.toggleDefinitionTemplateBq
+            elseif v['desc'] == "高清" then
+                tempalte = self.toggleDefinitionTemplateGq
+            elseif v['desc'] == "超清" or v['desc'] == "蓝光" then
+                tempalte = self.toggleDefinitionTemplateCq
+            end
+            local definitionItem = UnityEngine.GameObject.Instantiate(tempalte)
+            definitionItem.gameObject:SetActive(true)
+            definitionItem:GetComponent("UIToggle").value = (k == tonumber(currentDefinition))
+            definitionItem.name = "Toggle_" .. k
+            definitionItem.transform:SetParent(self.toggleDefinitionGridObj.transform)
+            definitionItem.transform.localScale = UnityEngine.Vector3(1,1,1)
+            EventDelegate.Add(definitionItem:GetComponent("UIButton").onClick, function() 
+                Common.PlaySound('9901')    --播放音效
+                if self.isPlayingBGM then
+                    MatchCenterSettings.NoticeGameSwitchBgm(false)   --test
+                    self.isPlayingBGM=false     --test
+                end
+                self:ChangeDefinition(k)
+            end)
+        end
+        self.toggleDefinitionGrid:Reposition()
+    end
+end
+
+
+function mt:AddEvents()
+    self:AddVideoPlayerEvents()
+    self:AddBulletEvents()
+    -------------amz add ----------------
+    if MatchCenterSetting.IsOpenSimpleBulletFunction then
+        self:AddSimpleBulletEvents()
+    end
+    -------------------------------------
+end
+
+
+function mt:AddVideoPlayerEvents()
+    EventDelegate.Add(self.buttonVideoPause.onClick, function() 
+        self:Resume()
+        MatchCenterReport.ClickResumeBtn()
+    end)
+    EventDelegate.Add(self.buttonVideoPauseMid.onClick, function() 
+        self:Resume() 
+        MatchCenterReport.ClickResumeBtn()
+    end)
+    EventDelegate.Add(self.buttonVideoPauseMid4G.onClick, function() self:Play() end)
+
+    EventDelegate.Add(self.buttonVideoResume.onClick, function() 
+        self:Pause()
+        MatchCenterReport.ClickPauseBtn()
+    end)
+
+    EventDelegate.Add(self.buttonVideoRefresh.onClick, function()
+        self:RefreshInfo()
+        -- MatchCenterReport.ClickResumeBtn()
+    end)
+
+    EventDelegate.Add(self.buttonFullScreen.onClick, function() 
+        Common.PlaySound('9901')    --播放音效
+        if self.isPlayingBGM then
+            MatchCenterSettings.NoticeGameSwitchBgm(false)   --test
+            self.isPlayingBGM=false     --test
+        end
+        self:SwitchFullScreen() 
+    end)
+    EventDelegate.Add(self.buttonControlArea.onClick, function() 
+        if not self.isClickArea then
+            self:ShowControllerArea()
+        else
+            self:ShowHeaderAndFooter(false)
+            self:HideChangeDefinition()
+            if self.hideControllerAreaTimerId ~= nil then
+                LuaTimer.Delete(self.hideControllerAreaTimerId)
+                self.hideControllerAreaTimerId = nil
+            end
+        end
+    end)
+
+    if self.gameObject.name == "Container_fullScreen" then
+        EventDispatcher.AddEventListener(MatchCenterEvent.FullVideoMsgCallback, self.OnVideoMsgCallback, self)
+        EventDelegate.Add(self.sendButton.onClick, function() self:OnSendButtonClick() end)
+        EventDelegate.Add(self.hotWordButton.onClick, function()  self:OnHotWordButtonClick() end)
+
+        -- 锁
+        EventDelegate.Add(self.lockBtn.onClick, function() self:OnLockBtnClick() end)
+        EventDelegate.Add(self.unlockBtn.onClick, function() self:OnUnlockBtnClick() end)
+
+    else
+        EventDispatcher.AddEventListener(MatchCenterEvent.VideoMsgCallback, self.OnVideoMsgCallback, self)
+    end
+    
+    EventDelegate.Add(self.buttonDefinition.onClick, function()
+        if not self.isClickDefinition then
+            self.toggleDefinitionArea:SetActive(true)
+            self:ShowControllerArea()
+            self:ShowChangeDefinition()
+        else
+            self:HideChangeDefinition()
+        end
+    end)
+    ----------amz add----------
+    EventDispatcher.AddEventListener(MatchCenterEvent.GetCurrentTab, self.GetCurrentTab, self)
+    ---------------------------
+end
+
+function mt:RemoveVideoPlayerEvents()
+    self.buttonVideoPause.onClick.Clear()
+    self.buttonVideoPauseMid.onClick.Clear()
+    self.buttonVideoPauseMid4G.onClick.Clear()
+    self.buttonVideoResume.onClick.Clear()
+    self.buttonVideoRefresh.onClick.Clear()
+    self.buttonFullScreen.onClick.Clear()
+    self.buttonControlArea.onClick.Clear()
+    if self.gameObject.name == "Container_fullScreen" then
+        EventDispatcher.RemoveEventListener(MatchCenterEvent.FullVideoMsgCallback, self.OnVideoMsgCallback)
+        self.sendButton.onClick.Clear()
+        self.hotWordButton.onClick.Clear()
+        self.lockBtn.onClick.Clear()
+        self.unlockBtn.onClick.Clear()
+    else
+        EventDispatcher.RemoveEventListener(MatchCenterEvent.VideoMsgCallback, self.OnVideoMsgCallback)
+    end
+    --------------amz add----------
+    EventDispatcher.RemoveEventListener(MatchCenterEvent.GetCurrentTab, self.GetCurrentTab)
+    -------------------------------
+end
+
+-- 添加弹幕事件
+function mt:AddBulletEvents()
+    self.bulletSwitchOnCallback = function() 
+        Common.PlaySound('9901')    --播放音效
+        self:SwitchBulletOn()
+        MatchCenterReport.ClickBulletOnBtn()
+    end
+    EventDelegate.Add(self.buttonBulletSwitchOn.onClick, self.bulletSwitchOnCallback)
+
+    self.bulletSwitchOffCallback = function() 
+        Common.PlaySound('9901')    --播放音效 
+        self:SwitchBulletOff() 
+        MatchCenterReport.ClickBulletOffBtn()
+    end
+    EventDelegate.Add(self.buttonBulletSwitchOff.onClick, self.bulletSwitchOffCallback)
+end
+
+
+function mt:RemoveBulletEvents()
+    self.buttonBulletSwitchOn.onClick.Clear()
+    self.buttonBulletSwitchOff.onClick.Clear()
+end
+
+---------------amz add--------精简弹幕事件-------
+-- 添加弹幕事件
+function mt:AddSimpleBulletEvents()
+    self.simpleBulletSwitchOnCallback = function() 
+        self:SwitchSimpleBulletOn()
+        --MatchCenterReport.ClickBulletOnBtn()
+    end
+    EventDelegate.Add(self.buttonSimpleBulletSwitchOn.onClick, self.simpleBulletSwitchOnCallback)
+
+    self.simpleBulletSwitchOffCallback = function() 
+        self:SwitchSimpleBulletOff() 
+        --MatchCenterReport.ClickBulletOffBtn()
+    end
+    EventDelegate.Add(self.buttonSimpleBulletSwitchOff.onClick, self.simpleBulletSwitchOffCallback)
+end
+
+
+function mt:RemoveSimpleBulletEvents()
+    self.buttonSimpleBulletSwitchOn.onClick.Clear()
+    self.buttonSimpleBulletSwitchOff.onClick.Clear()
+end
+------------------------------------------------
+
+function mt:RemoveEvents()
+    self:RemoveVideoPlayerEvents()
+    self:RemoveBulletEvents()
+    -------------amz add ----------------
+    if MatchCenterSetting.IsOpenSimpleBulletFunction then
+        self:RemoveSimpleBulletEvents()
+    end
+    -------------------------------------
+end
+
+
+function mt:RegisterTitle(titleTextComponent)
+    self.titleTextComponent = titleTextComponent
+    self.titleTextComponent.text = ''
+end
+
+
+function mt:RegisterViewPeople(peopleCountComponent)
+    self.peopleCountComponent = peopleCountComponent
+    self.peopleCountComponent.text = ''
+end
+
+----------------amz add--------------------------
+function mt:RegisterVedioStatus(videoStatusComponent)
+    self.videoStatusComponent = videoStatusComponent
+end
+-------------------------------------------------
+
+function mt:RegisterInputFieldComponent(inputFieldComponent)
+    self.inputFieldComponent = inputFieldComponent
+end
+
+
+
+function mt:RegisterInputSendComponent(buttonSendComponent)
+    self.buttonSendComponent = buttonSendComponent
+
+    self.buttonSendCallback = function() self:OnSend() end
+    self.buttonSendComponent.onClick:AddListener(self.buttonSendCallback)
+end
+
+function mt:UnRegisterComponentEvents()
+    if self.buttonSendComponent and self.buttonSendCallback then
+        self.buttonSendComponent.onClick:RemoveListener(self.buttonSendCallback)
+        self.buttonSendCallback = nil
+    end
+end
+
+
+
+-- 视频开始播放
+function mt:Play()
+    local url = MatchCenterDataManager.GetPlayUrl()
+    if url == nil then
+        MatchCenterSetting.NoticeGameShowTips("播放流异常，请退出重试~")
+        return
+    end
+    Logger.DEBUG("play url:" .. url)
+    if self.isPlayingBGM then
+        MatchCenterSettings.NoticeGameSwitchBgm(false)   --test
+        self.isPlayingBGM=false     --test
+    end
+    CSharpInterface.PlayVideo(self.objVideoScreen, url, true)
+    videoPlayerState = VideoState.PLAYING
+    self:RefreshPlayerState()
+    if self.heartBeatTimerId ~= nil then
+        LuaTimer.Delete(self.heartBeatTimerId)
+    end
+    self.heartBeatTimerId = LuaTimer.Add(0, tonumber(MatchCenterSetting.HeartBeatInterval) * 1000, function() 
+        self:ReportHeartBeat(1)
+    end)
+    -- 3S后隐藏loading，防止IOS上丢失视频事件，造成loading不消失
+    if self.hideLoadingMaskTimerId ~= nil then
+        LuaTimer.Delete(self.hideLoadingMaskTimerId)
+    end
+    self.hideLoadingMaskTimerId = LuaTimer.Add(3000, function()
+        if videoPlayerState == VideoState.PLAYING then
+            self:ShowNoMask()
+        end
+    end)
+end
+
+
+-- 视频停止
+function mt:Stop()
+    CSharpInterface.ClearVideoContainer()
+    videoPlayerState = VideoState.STAND_BY
+
+    if self.heartBeatTimerId ~= nil then
+        LuaTimer.Delete(self.heartBeatTimerId)
+    end
+    self.heartBeatTimerId = nil
+    if not self.isPlayingBGM then
+        MatchCenterSettings.NoticeGameSwitchBgm(true)   --test
+        self.isPlayingBGM=true     --test
+    end
+end
+
+-- 暂停播放
+function mt:Pause()
+    CSharpInterface.PauseVideo()
+    videoPlayerState = VideoState.STAND_BY
+    self:RefreshPlayerState()
+    self:ShowControllerArea()
+    if self.heartBeatTimerId ~= nil then
+        LuaTimer.Delete(self.heartBeatTimerId)
+    end
+    self.heartBeatTimerId = nil
+    if not self.isPlayingBGM then
+        MatchCenterSettings.NoticeGameSwitchBgm(true)   --test
+        self.isPlayingBGM=true     --test
+    end
+end
+
+-- 恢复播放
+function mt:Resume()
+    CSharpInterface.ResumeVideo()
+    videoPlayerState = VideoState.PLAYING
+    self:RefreshPlayerState()
+    self:ShowControllerArea()
+    if self.heartBeatTimerId ~= nil then
+        LuaTimer.Delete(self.heartBeatTimerId)
+    end
+    self.heartBeatTimerId = LuaTimer.Add(0, tonumber(MatchCenterSetting.HeartBeatInterval) * 1000, function() 
+        self:ReportHeartBeat(1)
+    end)
+    if self.isPlayingBGM then
+        MatchCenterSettings.NoticeGameSwitchBgm(false)   --test
+        self.isPlayingBGM=false     --test
+    end
+end
+
+
+function mt:RefreshRoomInfo()
+    local roomInfo = MatchCenterDataManager.GetRoomInfo()
+    if self.titleTextComponent ~= nil then
+        ---------------------amz add----------------------------
+        --赛事中心管理端配置直播间的标题
+        local roomTitle=MatchCenterDataManager.GetVideoTitle()
+        if MatchCenterDataManager.IsTimingVideoTime() then
+            roomTitle=MatchCenterDataManager.GetTimingVideoTitle()
+        end
+        if roomTitle~=nil then
+            if MatchCenterTools.SubStringGetTotalIndex(roomTitle) > 20 then
+                local titleText =  MatchCenterTools.SubStringUTF8(roomTitle, 1, 20)
+                self.titleTextComponent.text = tostring(titleText) .. "..."
+            else
+                self.titleTextComponent.text = tostring(roomTitle)
+            end
+        else
+            ----------------------------------------------------
+            if MatchCenterTools.SubStringGetTotalIndex(roomInfo['roomInfo']['roomTitle']) > 20 then
+                local titleText =  MatchCenterTools.SubStringUTF8(roomInfo['roomInfo']['roomTitle'], 1, 20)
+                self.titleTextComponent.text = tostring(titleText) .. "..."
+            else
+                self.titleTextComponent.text = tostring(roomInfo['roomInfo']['roomTitle'])
+            end
+        end
+    end
+    if self.peopleCountComponent ~= nil then
+        self.peopleCountComponent.text = tostring(MatchCenterTools.FormatViewNum(roomInfo['viewPeople']))
+    end
+    ----------------------------amz add--------------------------
+    --赛事中心管理端配置直播状态
+    if self.videoStatusComponent ~= nil then
+        local videoStatus=MatchCenterDataManager.IsLiveStatus()
+        if videoStatus==true then
+            --self.videoStatusComponent.spriteName="zhibo"
+            self.videoStatusComponent.transform:Find("Label_liveStatus"):GetComponent("UILabel").text = "直播中"
+        else
+            --self.videoStatusComponent.spriteName="chongbo"
+            self.videoStatusComponent.transform:Find("Label_liveStatus"):GetComponent("UILabel").text = "重播中"
+        end
+        self.videoStatusComponent:MakePixelPerfect()
+    end
+    -------------------------------------------------------------
+    local definition = MatchCenterDataManager.GetDefinition()
+    if definition == 1 then
+        self.buttonDefinitionLabel.text = "超清"
+    elseif definition == 2 then
+        self.buttonDefinitionLabel.text = "高清"
+    elseif definition == 3 then
+        self.buttonDefinitionLabel.text = "流畅"
+    end
+    for i = 1, self.toggleDefinitionGridObj.transform.childCount, 1 do 
+        self.toggleDefinitionGridObj.transform:Find("Toggle_" .. i).gameObject:GetComponent("UIToggle"):SetValue(definition == i)
+    end
+
+end
+
+-- 刷新信息
+function mt:RefreshInfo()
+    self:ClearVideoContainer()
+    self:RefreshRoomInfo()
+    self:Play()
+    self:ShowControllerArea()
+    self:RefreshBulletState()
+    -----------amz add--------
+    if MatchCenterSetting.IsOpenSimpleBulletFunction then
+        self:RefreshSimpleBulletState()
+    else
+        self.buttonSimpleBulletSwitchOnObj:SetActive(false)
+        self.buttonSimpleBulletSwitchOffObj:SetActive(false)
+    end
+    -------------------------
+end
+
+-- 刷新信息 4G
+function mt:RefreshInfoFor4G()
+    self:ClearVideoContainer()
+    self:RefreshRoomInfo()
+    -- self:RefreshPlayerState()
+    self:RefreshBulletState()
+    -----------amz add--------
+    if MatchCenterSetting.IsOpenSimpleBulletFunction then
+        self:RefreshSimpleBulletState()
+    end
+    -------------------------
+end
+
+
+
+
+-- 更新观看人数
+function mt:UpdateViewPeople()
+    local num = MatchCenterDataManager.GetViewPeople()
+    if self.peopleCountComponent ~= nil then
+        self.peopleCountComponent.text = tostring(MatchCenterTools.FormatViewNum(num))
+    end
+end
+
+
+local function ProcFunc_Default(self, params)
+    Logger.DEBUG("Receive Video Event ================> " .. params.eventId)
+end
+
+local function ProcFunc_OnPlayBegin(self, params)
+    videoPlayerState = VideoState.PLAYING
+    self:RefreshPlayerState()
+    if EventDispatcher.HasEventListener(MatchCenterEvent.PauseFor4G) then
+        EventDispatcher.DispatchEvent(MatchCenterEvent.PauseFor4G)
+        return
+    end
+end
+
+local function ProcFunc_OnPlay(self, params)
+    videoPlayerState = VideoState.PLAYING
+    self:RefreshPlayerState()
+    if EventDispatcher.HasEventListener(MatchCenterEvent.PauseFor4G) then
+        EventDispatcher.DispatchEvent(MatchCenterEvent.PauseFor4G)
+        return
+    end
+end
+
+
+local function ProcFunc_OnPlayEnd(self, params)
+    videoPlayerState = VideoState.PLAY_FAILED
+    self:RefreshPlayerState()
+end
+
+local function ProcFunc_OnPlayLoading(self, params)
+    videoPlayerState = VideoState.LOADING
+    self:RefreshPlayerState()
+end
+
+local function ProcFunc_OnBeginVideoDecode()
+  -- IOS 针对flv流无改变视频尺寸协议 
+    if Common.GetPlatformDesc() == "ios" then
+        MatchCenterSetting.NoticePandoraVideoSize()
+    end
+end
+
+local function ProcFunc_OnPlayProgress(self, params)
+    if videoPlayerState == VideoState.PLAYING then
+        return
+    end
+    ProcFunc_OnPlay(self, params)
+end
+
+local function ProcFunc_OnConnectFailed(self, params)
+    videoPlayerState = VideoState.PLAY_FAILED
+    CSharpInterface.ClearVideoContainer()
+    self:RefreshPlayerState()
+    if not self.isPlayingBGM then
+        MatchCenterSettings.NoticeGameSwitchBgm(true)   --test
+        self.isPlayingBGM=true     --test
+    end   
+end
+
+local function ProcFunc_OnAppPaused(self, params)
+    if MatchCenterDataManager.isHall then
+        if params.arg1 == "1" then -- 切出
+            self:Pause()
+            -- self:SwitchBulletOff()
+        elseif params.arg1 == "0" then -- 切回
+            -- self:Resume();
+            MatchCenterSetting.NoticeGameSwitchBgm(false)
+        end
+    end
+end
+
+-- 保持视频长宽比
+local function ProcFunc_ChangeResolution(self, params)
+    if  self.gameObject.name == "Container_fullScreen" then
+        self.objVideoScreenWidth = MatchCenterDataManager.GetScreenWidth()
+        self.objVideoScreenHeight= MatchCenterDataManager.GetScreenHeight()
+    end
+
+    if self.objVideoScreen == nil then
+        return;
+    end
+    local videoWidth = tonumber(params.arg1)
+    local videoHeight = tonumber(params.arg2)
+    if videoWidth == nil or videoHeight == nil then
+        return;
+    end
+    if videoWidth / videoHeight > self.objVideoScreenWidth / self.objVideoScreenHeight then
+        local height = self.objVideoScreenWidth * videoHeight / videoWidth
+        self.objVideoScreen:GetComponent("UIWidget").width = self.objVideoScreenWidth
+        self.objVideoScreen:GetComponent("UIWidget").height = math.ceil(height)
+    else
+        local width = math.ceil(self.objVideoScreenHeight * videoWidth / videoHeight)
+        self.objVideoScreen:GetComponent("UIWidget").width = math.ceil(width)
+        self.objVideoScreen:GetComponent("UIWidget").height = self.objVideoScreenHeight
+    end
+end
+
+
+--处理视频播放消息回调
+function mt:OnVideoMsgCallback(params)
+    -- Common.Report(JsonManager.EncodeJson(params), 1257312, 2)
+    local EVENT_PROC_FUNC_MAPPER = {
+        [MatchCenterSetting.PE_PLAY_BEGIN]                  = ProcFunc_OnPlayBegin,
+        [MatchCenterSetting.PE_PLAY_END]                    = ProcFunc_OnPlayEnd,
+        [MatchCenterSetting.PE_PLAY_LOADING]                = ProcFunc_OnPlayLoading,
+        [MatchCenterSetting.PE_PLAY_PROGRESS]               = ProcFunc_OnPlayProgress,
+        [MatchCenterSetting.PE_ERR_NET_DISCONNECT]          = ProcFunc_OnConnectFailed,
+        [MatchCenterSetting.PE_RCV_FIRST_I_FRAME]           = ProcFunc_OnPlay,
+        [MatchCenterSetting.PE_RTMP_STREAM_BEGIN]           = ProcFunc_OnPlayLoading,
+        [MatchCenterSetting.PE_CONNECT_SUCC]                = ProcFunc_OnPlayLoading,
+        [MatchCenterSetting.PE_START_VIDEO_DECODER]         = ProcFunc_OnBeginVideoDecode,
+        [MatchCenterSetting.PE_APP_PAUSED]                  = ProcFunc_OnAppPaused,
+        [MatchCenterSetting.FFP_MSG_APP_PAUSED]             = ProcFunc_OnAppPaused,
+        [MatchCenterSetting.PE_CHANGE_RESOLUTION]           = ProcFunc_ChangeResolution,
+        [MatchCenterSetting.FFP_MSG_PLAYBACK_STATE_CHANGED] = ProcFunc_OnPlay,
+    }
+
+    local eventId = params.eventId
+    if not eventId then
+        return
+    end
+    local numEventId = tonumber(eventId)
+    local func = EVENT_PROC_FUNC_MAPPER[numEventId]
+    if not func then
+        ProcFunc_Default(self, params)
+        return
+    end
+
+    if(videoPlayerState == VideoState.STAND_BY and numEventId == MatchCenterSetting.PE_PLAY_PROGRESS) then
+        --暂停状态下，屏蔽2005事件
+        return
+    end
+    func(self, params)
+end
+
+
+
+
+
+-- 更新播放状态
+function mt:RefreshPlayerState()
+    Logger.ERROR("======" .. tostring(videoPlayerState))
+
+    local isPlaying = self:IsPlaying()
+    self.buttonVideoPauseObj:SetActive(not isPlaying)
+    self.buttonVideoResumeObj:SetActive(isPlaying)
+    self.buttonVideoRefreshObj:SetActive(true)
+    self.buttonFullScreenObj:SetActive(true)
+    self.buttonDefinitionObj:SetActive(true)
+    if videoPlayerState == VideoState.STAND_BY then
+        self:ShowPauseMask()
+    elseif videoPlayerState == VideoState.PLAYING then
+        self:ShowNoMask()
+    elseif videoPlayerState == VideoState.LOADING or videoPlayerState == VideoState.CONNECTING then
+        self:ShowLoadingMask()
+    elseif videoPlayerState == VideoState.PLAY_FAILED then
+        -- self:ShowFailedMask()
+    end
+end
+
+function mt:ShowPauseMask()
+    self.transform:Find("Container_mid/Container_control/Container_pause").gameObject:SetActive(true)
+    self.transform:Find("Container_mid/Container_control/Container_pause4G").gameObject:SetActive(false)
+end
+
+
+function mt:ShowLoadingMask()
+    Logger.DEBUG("show loading mask")
+    self.transform:Find("Container_mid/Container_loading").gameObject:SetActive(true)
+    ------------amz add-----------
+    if self.checkLoadingTimer~=nil then
+        LuaTimer.Delete(self.checkLoadingTimer)
+    end
+    self.checkLoadingTimer=LuaTimer.Add(5000,0,function()
+        if videoPlayerState == VideoState.PLAYING then   --处理loading不消失的情况5s后隐藏loading，弱网情况下load会有点问题
+            self:ShowNoMask()
+            if self.transform:Find("Container_mid/Container_loading").gameObject.activeInHierarchy then
+                self.transform:Find("Container_mid/Container_loading").gameObject:SetActive(false)
+            end
+            LuaTimer.Delete(self.checkLoadingTimer)
+            self.checkLoadingTimer=nil
+        else
+            if self.transform:Find("Container_mid/Container_loading").gameObject.activeInHierarchy then
+                self.transform:Find("Container_mid/Container_loading").gameObject:SetActive(false)
+            end
+            LuaTimer.Delete(self.checkLoadingTimer)
+            self.checkLoadingTimer=nil
+        end
+    
+    end)
+    -----------------------------
+end
+
+
+function mt:ShowNoMask()
+    Logger.DEBUG("show no mask")
+    self.transform:Find("Container_mid/Container_control/Container_pause4G").gameObject:SetActive(false)
+    self.transform:Find("Container_mid/Container_control/Container_pause").gameObject:SetActive(false)
+    self.transform:Find("Container_mid/Container_loading").gameObject:SetActive(false)
+end
+
+
+function mt:ShowPauseMask4G()
+    self.transform:Find("Container_mid/Container_control/Container_pause4G").gameObject:SetActive(true)
+    self.transform:Find("Container_mid/Container_control/Container_pause").gameObject:SetActive(false)
+end
+
+function mt:IsPlaying()
+    return videoPlayerState == VideoState.PLAYING or videoPlayerState == VideoState.LOADING or videoPlayerState == VideoState.CONNECTING
+end
+
+
+-- 全屏开关
+-- 回调方法外层传入
+function mt:SwitchFullScreen()
+    local switchFullScreenCallback = self.switchFullScreenCallback
+    if switchFullScreenCallback then
+        switchFullScreenCallback()
+        self:ShowControllerArea()
+    else
+        Logger.DEBUG("switchFullScreenCallback is nil")
+    end
+end
+
+
+function mt:ClearVideoContainer()
+    CSharpInterface.ClearVideoContainer()
+    if self.heartBeatTimerId ~= nil then
+        LuaTimer.Delete(self.heartBeatTimerId)
+    end
+end
+
+
+-- 显示控制区 3s后隐藏
+function mt:ShowControllerArea()
+    Logger.DEBUG("Show Controller Area")
+    if self.hideControllerAreaTimerId ~= nil then
+        LuaTimer.Delete(self.hideControllerAreaTimerId)
+        self.hideControllerAreaTimerId = nil
+    end
+    
+    self:ShowHeaderAndFooter(true)
+    self.hideControllerAreaTimerId = LuaTimer.Add(3000, function()
+
+        if self.gameObject.name == "Container_fullScreen" then
+            if self.chatInput.isSelected then
+                self:ShowControllerArea()
+            else
+                self:ShowHeaderAndFooter(false)
+                self:HideChangeDefinition()
+            end
+        else 
+            self:ShowHeaderAndFooter(false)
+            self:HideChangeDefinition()
+        end
+    end)
+
+end
+
+
+function mt:ShowHeaderAndFooter(flag)
+    if flag then
+        self.isClickArea = true
+    else
+        self.isClickArea = false
+    end
+    if self.isLock then -- 锁屏不显示
+        self.transform:Find("Container_header").gameObject:SetActive(false)
+        self.transform:Find("Container_footer").gameObject:SetActive(false)
+    else
+        self.transform:Find("Container_header").gameObject:SetActive(flag)
+        self.transform:Find("Container_footer").gameObject:SetActive(flag)
+    end
+    self.transform:Find("Container_lock").gameObject:SetActive(flag)
+end
+
+
+
+function mt:ReportHeartBeat(state)
+    MatchCenterRequestHandler.ReportWatchVideoHeartBeat(state)
+end
+
+--------------------------弹幕相关-----------------------------
+
+-- 显示弹幕
+function mt:StartBullet()
+    MatchCenterDataManager.SetBulletOn(true)
+    -- 隐藏占位的弹幕节点
+    local tempText = self.transform:Find("Container_mid/Container_bulletScreen/Text_bullet")
+    if tempText ~= nil then
+        tempText.transform.localScale = UnityEngine.Vector3(0,1,1)
+    end
+    self.bulletScreen:StartBulletScreen()
+end
+
+-- 停止弹幕
+function mt:StopBullet()
+    MatchCenterDataManager.SetBulletOn(false)
+    self.bulletScreen:StopBulletScreen()
+end
+
+
+
+function mt:SwitchBulletOn()
+    MatchCenterDataManager.SetBulletOn(true)
+    self:RefreshBulletState()
+    self:ShowControllerArea()
+end
+
+function mt:SwitchBulletOff()
+    MatchCenterDataManager.SetBulletOn(false)
+    self:RefreshBulletState()
+    self:ShowControllerArea()
+end
+
+
+
+-- 刷新弹幕状态
+function mt:RefreshBulletState()
+    local isBulletOn = MatchCenterDataManager.IsBulletOn()
+    if isBulletOn then
+        self:StartBullet()
+        self.buttonBulletSwitchOnObj:SetActive(false)
+        self.buttonBulletSwitchOffObj:SetActive(true)
+    else
+        self:StopBullet()
+        self.buttonBulletSwitchOnObj:SetActive(true)
+        self.buttonBulletSwitchOffObj:SetActive(false)
+        -----amz add
+        if MatchCenterSetting.IsOpenSimpleBulletFunction then
+            MatchCenterDataManager.SetSimpleBulletOn(false)
+            self.buttonSimpleBulletSwitchOnObj:SetActive(true)
+            self.buttonSimpleBulletSwitchOffObj:SetActive(false)
+        end
+        ------------
+    end
+end
+
+---------------amz add 精简弹幕--------
+function mt:SwitchSimpleBulletOn()
+    MatchCenterDataManager.SetSimpleBulletOn(true)
+    self:RefreshSimpleBulletState()
+    self:ShowControllerArea()
+    self:TimingResetBulletTable()
+end
+
+function mt:SwitchSimpleBulletOff()
+    MatchCenterDataManager.SetSimpleBulletOn(false)
+    self:RefreshSimpleBulletState()
+    self:ShowControllerArea()
+    self:StopTimingSimpleBullet()
+end
+
+
+
+-- 刷新精简弹幕状态
+function mt:RefreshSimpleBulletState()
+    local isBulletOn = MatchCenterDataManager.IsBulletOn()
+    local isSimpleBulletOn = MatchCenterDataManager.IsSimpleBulletOn()
+    if isBulletOn then
+        if isSimpleBulletOn then
+            MatchCenterDataManager.SetSimpleBulletOn(true)
+            self.buttonSimpleBulletSwitchOnObj:SetActive(false)
+            self.buttonSimpleBulletSwitchOffObj:SetActive(true)
+        else
+            MatchCenterDataManager.SetSimpleBulletOn(false)
+            self.buttonSimpleBulletSwitchOnObj:SetActive(true)
+            self.buttonSimpleBulletSwitchOffObj:SetActive(false)
+        end
+        
+    else
+        MatchCenterDataManager.SetSimpleBulletOn(false)
+        self.buttonSimpleBulletSwitchOnObj:SetActive(true)
+        self.buttonSimpleBulletSwitchOffObj:SetActive(false)
+    end
+end
+--------------------------------------
+local currentTab=0   --默认在大厅
+function mt:GetCurrentTab(index)
+    currentTab=index
+end
+
+----------amz 改进版（弹幕大厅包厢区分）------------
+function mt:AddBulletToScreen(bullet)
+    Common.TablePrinter(bullet,"****","+++++++++++++")      --test ，bullet is table
+    local content = bullet['barrageInfo']
+    local nickName = MatchCenterDataManager.GetNickName()
+
+    if nickName == bullet['nickName'] then --自己发的
+        if bullet['ext']['welcomeWord']==MatchCenterSetting.WelcomeEnterFansBox then
+            
+            local boxPlayerInfo=MatchCenterDataManager.GetBoxPlayerInfo()
+            local playerName="该选手"
+            for k,v in pairs(boxPlayerInfo) do
+                if tonumber(v['id'])==tonumber(bullet['ext']['fansBoxId']) then
+                    playerName=JsonManager.DecodeJson(v['info'])['clan_name']
+                end
+            end
+
+            content = string.format("[%s]%s[-][%s]%s[-][%s]%s[-]", "ffffff", "欢迎进入", "ffcc00", tostring(playerName), "ffffff", "粉丝专属包厢")
+        else
+            content =  string.format("[%s]%s[-]", "ffcc00", content)
+        end
+        
+    elseif  bullet['nickName'] == MatchCenterSetting.AdminName then --管理员账号
+        if string.find(content, MatchCenterSetting.SystemBulletFormat) then
+            content = "火影办公室：" .. string.sub(content, MatchCenterSetting.SystemBulletFlagLength + 1)
+            content = string.format("[%s]%s[-]", MatchCenterSetting.SystemBulletColor, content)
+        end
+    elseif bullet['nickName'] == MatchCenterSetting.SystemBulletNickname then --中台系统弹幕
+        content = "火影办公室：" .. content
+        content = string.format("[%s]%s[-]", MatchCenterSetting.SystemBulletColor, content)
+    else --正常弹幕
+        if bullet['ext']['welcomeWord']==MatchCenterSetting.WelcomeEnterFansBox then
+            bullet['nickName'] = MatchCenterTools.SubStringUTF8(bullet['nickName'], 1, 8)
+            bullet['nickName'] = string.gsub(bullet['nickName'], "%[.%]", "")
+            content = string.format("[%s]%s[-][%s]%s[-][%s]%s[-]", "ffffff", "欢迎", "ffcc00", bullet['nickName'], "ffffff", "进入直播间")
+        else
+            bullet['nickName'] = MatchCenterTools.SubStringUTF8(bullet['nickName'], 1, 8)
+            bullet['nickName'] = string.gsub(bullet['nickName'], "%[.%]", "")
+            bullet['barrageInfo'] = MatchCenterTools.SubStringUTF8(bullet['barrageInfo'], 1, 40)
+            bullet['barrageInfo'] =  string.gsub(bullet['barrageInfo'], "%[.%]", "")
+            content = string.format("[%s]%s[-]：[%s]%s[-]", "ffcc00", bullet['nickName'], "ffffff", bullet['barrageInfo'])
+        end
+    end
+    Logger.DEBUG("当前tab="..tostring(currentTab))  --test
+    if currentTab==1 then --在包厢tab
+        if bullet['ext']['fansBoxId']~=nil then --已选过包厢，弹幕带包厢id
+            local boxBindId=MatchCenterDataManager.GetBoxBindId()
+            if tonumber(bullet['ext']['fansBoxId'])==boxBindId then  --包厢id相同
+                --self.bulletScreen:InsertBulletTextElement(content)
+                local isSimpleBullet=MatchCenterDataManager.IsSimpleBulletOn()
+                self:AddBulletContent(bullet['nickName'],bullet['barrageInfo'],content,isSimpleBullet)
+                Logger.DEBUG("+++++++++++907 包厢弹幕")  --test
+            end
+        else -- 当前tab在包厢全屏模式的话，没绑定包厢的情况下仍为大厅弹幕
+            local hasBindId=MatchCenterDataManager.IsHasBindBox()  --绑定包厢true，未绑定false
+            if hasBindId==false then
+                --self.bulletScreen:InsertBulletTextElement(content)
+                local isSimpleBullet=MatchCenterDataManager.IsSimpleBulletOn()
+                self:AddBulletContent(bullet['nickName'],bullet['barrageInfo'],content,isSimpleBullet)
+                Logger.DEBUG("+++++++++++915 大厅弹幕")  --test
+            end
+        end
+    else  --在大厅tab
+        if bullet['ext']['fansBoxId']==nil then
+            --self.bulletScreen:InsertBulletTextElement(content)
+            local isSimpleBullet=MatchCenterDataManager.IsSimpleBulletOn()
+            self:AddBulletContent(bullet['nickName'],bullet['barrageInfo'],content,isSimpleBullet)
+            Logger.DEBUG("+++++++++++923 大厅弹幕")  --test
+        end
+    end
+end
+
+
+-- 弹幕表里是否存在一样的弹幕（精简弹幕下）
+function mt:CheckBulletIsExist(val)
+    for k,v in pairs(bulletTempTable) do
+        if v==val then
+            return true
+        end
+    end
+    return false
+end
+
+-- 一分钟后清空弹幕表（精简弹幕下）
+function mt:TimingResetBulletTable()
+    local interval =60000
+    self.delayResetTableTimer=LuaTimer.Add(0,interval,function()
+        bulletTempTable={}
+    end)
+end
+
+-- 停止精简弹幕的定时器
+function mt:StopTimingSimpleBullet()
+    if self.delayResetTableTimer~=nil then
+        LuaTimer.Delete(self.delayResetTableTimer)
+        self.delayResetTableTimer=nil
+        bulletTempTable={}
+    end
+end
+
+-- 添加弹幕内容:弹幕昵称，弹幕内容，弹幕显示内容，是否开启精简弹幕
+function mt:AddBulletContent(userNickName,barrageInfo,content,isSimpleBullet)
+    Logger.DEBUG("**************是否是精简弹幕："..tostring(isSimpleBullet))
+    if isSimpleBullet~=nil and isSimpleBullet==true then
+        local nickName = MatchCenterDataManager.GetNickName()
+        if userNickName==nickName or userNickName==MatchCenterSetting.AdminName
+        or userNickName==MatchCenterSetting.SystemBulletNickname then -- 自己发的，管理员发的，系统中台弹幕
+            self.bulletScreen:InsertBulletTextElement(content)
+        else --别人发的
+            local isExist=self:CheckBulletIsExist(barrageInfo)
+            if isExist==false then
+                self.bulletScreen:InsertBulletTextElement(content)
+                table.insert( bulletTempTable, barrageInfo )
+            end
+        end
+        --Common.TablePrinter(bulletTempTable,"temptable","++++++")
+    else
+        self.bulletScreen:InsertBulletTextElement(content)
+    end
+
+end
+----------------------聊天相关 全屏模式有聊天组件--------------------
+
+function mt:OnSendButtonClick()
+    Common.PlaySound('9901')    --test
+    if not MatchCenterDataManager.IsAllowBullet() then
+        MatchCenterSetting.NoticeGameShowTips("弹幕系统维护中")
+        return
+    end
+    local text = self.chatInputLabel.text
+    -- todo 输入过滤
+    text = (text:gsub("^%s*(.-)%s*$", "%1"))
+    if #text == 0 or text == "请输入" or text == "输入聊天内容" then
+        MatchCenterSetting.NoticeGameShowTips("内容不能为空")
+        return
+    end 
+    local roomInfo = MatchCenterDataManager.GetRoomInfo()
+    local anchorId, livePlatId = MatchCenterDataManager.GetAnchorIdAndLivePlatId()
+    local nickName =  MatchCenterDataManager.GetNickName()
+    --MatchCenterRequestHandler.SendBullet(anchorId, livePlatId, roomInfo['roomInfo']['pid'], text, nickName)
+    ---------amz add----------
+    local boxBindId=MatchCenterDataManager.GetBoxBindId()
+    if currentTab==1 then
+        MatchCenterRequestHandler.SendBullet(anchorId, livePlatId, roomInfo['roomInfo']['pid'], text, nickName,boxBindId)
+    else
+        MatchCenterRequestHandler.SendBullet(anchorId, livePlatId, roomInfo['roomInfo']['pid'], text, nickName)
+    end
+    
+    --------------------------
+    self.chatInputLabel.text = ''
+    self.chatInput.value = ''
+    MatchCenterReport.ClickSendBulletBtn()
+end
+
+
+function mt:OnHotWordButtonClick()
+    Common.PlaySound('9901')    --test
+    self.hotWordButton.transform:Find("Sprite_pointer").rotation=UnityEngine.Quaternion.Euler(0,0,0)
+    --self.hotWordComponent:SetActive(true)
+    -----------amz add--------
+    local boxBindId=MatchCenterDataManager.GetBoxBindId()
+    if currentTab==1 then
+        self.hotWordComponent:SetActive(true,boxBindId)
+    else
+        self.hotWordComponent:SetActive(true)
+    end
+    ------------------------------
+    self:ShowControllerArea()
+end
+
+
+------------------------------ 切换清晰度 ------------------------------
+
+function mt:ShowChangeDefinition()
+    self.isClickDefinition = true
+    self.toggleDefinitionArea:GetComponent("UITweener"):Play(true)
+end
+
+function mt:HideChangeDefinition()
+    self.isClickDefinition = false
+    self.toggleDefinitionArea:GetComponent("UITweener"):Play(false)
+end
+
+function mt:ChangeDefinition(value)
+    MatchCenterReport.ClickDefinition(value) -- 清晰度点击上报
+    MatchCenterDataManager.SetVideoDefinition(value)
+    self:RefreshInfo()
+    self.tempTimerId = LuaTimer.Add(500, function()
+        self:HideChangeDefinition()
+        LuaTimer.Delete(self.tempTimerId)
+    end)
+end
+
+---------------------------------全屏锁------------------------------
+-- 解锁
+function mt:OnLockBtnClick()
+    self.isLock = false
+    self.lock:SetActive(false)
+    self.unlock:SetActive(true)
+    self:ShowControllerArea()
+end
+
+-- 加锁
+function mt:OnUnlockBtnClick()
+    self.isLock = true
+    self.lock:SetActive(true)
+    self.unlock:SetActive(false)
+    self:HideChangeDefinition()
+    self:ShowControllerArea()
+end
+
+-- 销毁
+function mt:Destroy()
+    self:RemoveEvents()
+    if self.heartBeatTimerId then
+        LuaTimer.Delete(self.heartBeatTimerId)
+    end
+    if self.hideControllerAreaTimerId then
+        LuaTimer.Delete(self.hideControllerAreaTimerId)
+    end
+
+    if self.hideLoadingMaskTimerId then
+        LuaTimer.Delete(self.hideLoadingMaskTimerId)
+    end
+    --------amz add-------
+    if self.checkLoadingTimer then
+        LuaTimer.Delete(self.checkLoadingTimer)
+    end
+    self:StopTimingSimpleBullet()
+    --------------------
+
+    for k, _ in pairs(self) do
+		self[k] = nil
+    end 
+end
+
+
+
+return mt

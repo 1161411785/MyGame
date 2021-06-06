@@ -1,0 +1,357 @@
+require ("Common")
+
+local MatchCenterSetting         = require("MatchCenterSetting")
+local MatchCenterRequestHandler  = require("MatchCenterRequestHandler")
+local MatchCenterDataManager     = require("MatchCenterDataManager")
+local MatchCenterReport          = require("MatchCenterReport")
+local MatchCenterEvent           =  require "MatchCenterEvent"
+local MatchCenterHotWord         = require("MatchCenterHotWord")
+local MatchCenterTools           = require("MatchCenterTools")
+
+
+local Logger = Common.GetLogger()
+
+local mt = {}
+
+function mt:New()
+    local o = {}
+    setmetatable(o, mt)
+    self.__index = self
+    return o
+end
+
+function mt:Init(gameObject)
+    self.gameObject = gameObject
+    self.transform  = self.gameObject.transform
+    
+    self.selectFansBox=self.gameObject.transform:Find("Container_selectFansBox").gameObject --选择包厢
+    self.fansBoxChat=self.gameObject.transform:Find("Container_fansBoxChat").gameObject --包厢聊天
+    self.exitFansBox=self.gameObject.transform:Find("Container_exitTip").gameObject --退出包厢提示弹窗
+
+    --选择部分
+    self.enterBoxBtn=self.gameObject.transform:Find("Container_selectFansBox/Sprite_enterBoxBtn"):GetComponent("UIButton")
+    self.playerModel=self.gameObject.transform:Find("Container_selectFansBox/Toggle_player_model").gameObject
+    self.playerGrid=self.gameObject.transform:Find("Container_selectFansBox/Scroll View/Grid").gameObject
+    --聊天部分
+    self.exitBoxBtn=self.gameObject.transform:Find("Container_fansBoxChat/Container_chatArea/Sprite_exitBoxBtn"):GetComponent("UIButton")
+
+    self.textList = self.fansBoxChat.transform:Find("Container_chatArea/Label_chatArea").gameObject:GetComponent("UITextList")
+    self.textListLabel = self.fansBoxChat.transform:Find("Container_chatArea/Label_chatArea").gameObject:GetComponent("UILabel")
+    self.inputLabel = self.fansBoxChat.transform:Find("Container_inputArea/Sprite_input").gameObject:GetComponent("UILabel")
+    self.inputComponent = self.fansBoxChat.transform:Find("Container_inputArea/Sprite_input").gameObject:GetComponent("UIInput")
+    self.sendButton = self.fansBoxChat.transform:Find("Container_inputArea/Sprite_send").gameObject:GetComponent("UIButton")
+
+    --退出包厢弹窗部分
+    self.sureBtn=self.gameObject.transform:Find("Container_exitTip/Sprite_sureBtn"):GetComponent("UIButton")
+    self.closeTipBtn=self.gameObject.transform:Find("Container_exitTip/Sprite_closeTipBtn"):GetComponent("UIButton")
+
+    -- 热词相关
+    self.hotWordComponent   = MatchCenterHotWord:New()
+    self.hotWordComponent:Init(self.fansBoxChat.transform:Find("Container_inputArea/Container_hotList").gameObject)
+    self.hotWordBtn         = self.fansBoxChat.transform:Find("Container_inputArea/Sprite_hotWord").gameObject:GetComponent("UIButton")
+
+    self.chatBuffer = {}
+    self.isFillContent = false
+    self.textList:Add("请各位忍者学员文明观赛，任何违法、违规、低俗等不良信息将被禁言，祝您观赛愉快哦～")
+
+    self.isRender = false
+    self.buttonFunctionMap = {}
+    self:AddEventsListener()
+end
+
+function mt:AddEvents()
+    for button, response in pairs(self.buttonFunctionMap) do
+		if button ~= nil and button.gameObject ~= nil  and Slua.IsNull(button) == false then
+			UIEventListener.Get(button).onClick = response
+		end
+    end
+end
+
+
+
+function mt:RemoveEvents()
+    for button, response in pairs(self.buttonFunctionMap) do
+		if button ~= nil and button.gameObject ~= nil  and Slua.IsNull(button) == false then
+			UIEventListener.Get(button).onClick = nil
+		end
+	end
+	self.buttonFunctionMap = {};
+end
+
+
+function mt:Render(bindId)
+    Logger.DEBUG("打开粉丝包厢"..tostring(bindId))
+    --todo
+    self.selectFansBox:SetActive(false)
+    self.fansBoxChat:SetActive(false)
+
+    self.buttonFunctionMap[self.enterBoxBtn.gameObject]=function() self:EnterFansBox() end
+    self.buttonFunctionMap[self.exitBoxBtn.gameObject]=function() self:ExitFansBox() end
+    self.buttonFunctionMap[self.sureBtn.gameObject]=function() self:SureExitBox() end
+    self.buttonFunctionMap[self.closeTipBtn.gameObject]=function() self:CloseTipPop() end
+
+    local isGetBoxPlayerInfo=MatchCenterDataManager.IsGetBoxPlayerInfo()
+    Logger.DEBUG("shuju  *****"..tostring(isGetBoxPlayerInfo))
+        
+    if isGetBoxPlayerInfo then
+        local boxPlayerInfo=MatchCenterDataManager.GetBoxPlayerInfo()
+        self.boxPlayerCount=#boxPlayerInfo
+        Common.TablePrinter(boxPlayerInfo,"boxPlayerInfo","####################")
+        for k,v in pairs(boxPlayerInfo) do
+            local instance=Common.CloneAndAddToParent(self.playerModel,"player_"..k,self.playerGrid)
+            local headIcon=instance.transform:Find("Sprite_head_bg/Sprite_head_icon").gameObject
+            local processSpriteCallBackFct=function()
+                Logger.DEBUG("+++++++++++++78 suc")
+                -- if headIcon~=nil then
+                --     headIcon:SetActive(true)
+                -- end
+            end
+            if v['info']~=nil then
+                local info=JsonManager.DecodeJson(v['info'])
+                if info['clan_logo']~=nil and info['clan_name']~=nil then
+                    Common.ShowImage(MatchCenterSetting.PanelName,"http:"..info['clan_logo'],headIcon,false,processSpriteCallBackFct)
+                    instance.transform:Find("Label"):GetComponent("UILabel").text=info['clan_name']
+                end
+            end
+            instance:SetActive(true)
+        end
+        self.playerGrid:GetComponent(UIGrid):Reposition()
+    end
+   
+    self:AddEvents()
+end
+
+function mt:RefreshRender(bindId,needWelcome)
+    Logger.DEBUG("刷新粉丝包厢"..tostring(bindId))
+    self.bindId=bindId
+    if bindId==nil then
+        --显示选择包厢界面
+        self:ShowSelectFansBox()
+    else
+        --显示包厢聊天界面
+        self:ShowFansBoxChat(bindId,needWelcome)
+    end
+end
+
+
+function mt:SetActive(flag)
+    if flag then
+        
+        MatchCenterRequestHandler.GetFanBoxInfo()     --查询包厢信息
+        if not self.isRender then
+
+            self:Render()
+            self.isRender = true
+        end
+        --MatchCenterReport.ClickScheduleTab()
+    end
+    self.gameObject:SetActive(flag)
+end
+
+function mt:ShowSelectFansBox()
+    self.selectFansBox:SetActive(true)
+    self.fansBoxChat:SetActive(false)
+    self:ResetSelectBox()
+end
+
+function mt:ShowFansBoxChat(bindId,needWelcome)
+    self.selectFansBox:SetActive(false)
+    self.fansBoxChat:SetActive(true)
+    if needWelcome then
+        self:EnterFansBoxChatTip(bindId)
+    end
+end
+
+function mt:EnterFansBox()
+    --选中包厢时
+    local bindId=self:HasSelectBox()
+    if bindId==nil then
+        --未选中包厢时
+        MatchCenterSettings.NoticeGameShowTips("请选择粉丝包厢")
+    else
+        MatchCenterRequestHandler.BindFanBox(bindId)
+    end
+
+end
+
+function mt:ExitFansBox()
+    self.exitFansBox:SetActive(true)
+end
+
+function mt:SureExitBox()
+    MatchCenterRequestHandler.CancelBindFanBox()
+    self.exitFansBox:SetActive(false)
+end
+
+function mt:CloseTipPop()
+    self.exitFansBox:SetActive(false)
+end
+
+function mt:HasSelectBox()
+    local boxPlayerInfo=MatchCenterDataManager.GetBoxPlayerInfo()
+    
+    for i=1,self.boxPlayerCount do
+        if self.playerGrid.transform:Find("player_"..i):GetComponent("UIToggle").value==true then
+            Logger.DEBUG("*****select********** "..tostring(boxPlayerInfo[i].id))
+            local id=tonumber(boxPlayerInfo[i].id)
+            return id
+        end
+    end
+    return nil
+end
+
+function mt:ResetSelectBox()
+    for i=1,self.boxPlayerCount do
+        if self.playerGrid.transform:Find("player_"..i):GetComponent("UIToggle").value==true then
+            self.playerGrid.transform:Find("player_"..i):GetComponent("UIToggle"):SetValue(false)
+        end
+    end
+end
+
+---------------------------------------------
+function mt:AddEventsListener()
+    EventDispatcher.AddEventListener(MatchCenterEvent.UpdateRenderFansBox,self.RefreshRender,self)
+    EventDelegate.Add(self.sendButton.onClick, function() self:OnSendButtonClick() end)
+    -- 点击热词
+    EventDelegate.Add(self.hotWordBtn.onClick, function()
+        Common.PlaySound('9929')    --播放音效
+        local boxBindId=MatchCenterDataManager.GetBoxBindId()
+        Logger.DEBUG("+++++++当前+++201+++*****"..tostring(boxBindId))
+        self.hotWordComponent:SetActive(true,boxBindId)
+    end)
+
+    self.timerId = LuaTimer.Add(0, 50, function()
+            local b = table.remove(self.chatBuffer, 1)
+            if b then
+                self:UpdateChatContent(b)
+            end
+    end)
+end
+
+
+
+function mt:RemoveEventsListener()
+    EventDispatcher.RemoveEventListener(MatchCenterEvent.UpdateRenderFansBox,self.RefreshRender)
+    self.sendButton.onClick.Clear()
+    self.hotWordBtn.onClick.Clear()
+
+    if self.timerId then
+        LuaTimer.Delete(self.timerId)
+    end
+end
+
+
+function mt:UpdateChatContent(text)
+    if self.textListLabel.printedSize.y > 370 and not self.isFillContent then
+        self.textList.style = 1
+        self.textList.scrollValue = 1
+        self.isFillContent = true
+    end
+    self.textList:Add(text)
+end
+
+
+function mt:AddChatContentToBuffer(data)
+    if #self.chatBuffer < 200 then
+        if data['nickName'] == MatchCenterSetting.AdminName and string.find(data['barrageInfo'], MatchCenterSetting.SystemBulletFormat) then 
+            local text = "火影办公室：" .. string.sub(data['barrageInfo'], MatchCenterSetting.SystemBulletFlagLength + 1)
+            text = string.format("[%s]%s[-]", MatchCenterSetting.SystemBulletColor, text)
+            table.insert(self.chatBuffer, text)
+        elseif data['nickName'] == MatchCenterSetting.SystemBulletNickname then
+            local text = "火影办公室：" .. data['barrageInfo']
+            text = string.format("[%s]%s[-]", MatchCenterSetting.SystemBulletColor, text)
+            table.insert(self.chatBuffer, text)
+        else -- 默认样式
+            if data['ext']['welcomeWord']==MatchCenterSetting.WelcomeEnterFansBox then  --欢迎进入粉丝包厢的
+                local nickName = MatchCenterDataManager.GetNickName()
+                if nickName==data['nickName'] then
+
+                    local boxPlayerInfo=MatchCenterDataManager.GetBoxPlayerInfo()
+                    local playerName="该选手"
+                    for k,v in pairs(boxPlayerInfo) do
+                        if tonumber(v['id'])==tonumber(data['ext']['fansBoxId']) then
+                            playerName=JsonManager.DecodeJson(v['info'])['clan_name']
+                        end
+                    end
+                    
+                    local text = string.format("[%s]%s[-][%s]%s[-][%s]%s[-]", "ffffff", "欢迎进入", "ffcc00", tostring(playerName), "ffffff", "粉丝专属包厢")
+                    table.insert(self.chatBuffer, text)
+                else
+                    local text=string.format("[%s]%s[-][%s]%s[-][%s]%s[-]", "ffffff", "欢迎", "ffcc00", data['nickName'], "ffffff", "进入直播间")
+                    table.insert(self.chatBuffer, text)
+                end
+            else
+                data['nickName'] = MatchCenterTools.SubStringUTF8(data['nickName'], 1, 8)
+                data['nickName'] = string.gsub(data['nickName'], "%[.%]", "")
+                data['barrageInfo'] = MatchCenterTools.SubStringUTF8(data['barrageInfo'], 1, 40)
+                data['barrageInfo'] =  string.gsub(data['barrageInfo'], "%[.%]", "")
+                local text = string.format("[%s]%s[-]：[%s]%s[-]", "ffcc00", data['nickName'], "ffffff", data['barrageInfo'])
+                table.insert(self.chatBuffer, text)
+            end
+        end
+    end
+    
+end
+
+
+function mt:OnSendButtonClick()
+    Common.PlaySound('9901')    --播放音效
+    if not MatchCenterDataManager.IsAllowBullet() then
+        MatchCenterSetting.NoticeGameShowTips("弹幕系统维护中")
+        return
+    end
+    local text = self.inputLabel.text
+    text = (text:gsub("^%s*(.-)%s*$", "%1"))
+    if #text == 0 or text == "请输入" or text == "输入聊天内容"  then
+        MatchCenterSetting.NoticeGameShowTips("内容不能为空")
+        return
+    end 
+    local roomInfo = MatchCenterDataManager.GetRoomInfo()
+    local anchorId, livePlatId = MatchCenterDataManager.GetAnchorIdAndLivePlatId()
+    local nickName =  MatchCenterDataManager.GetNickName()
+    MatchCenterRequestHandler.SendBullet(anchorId, livePlatId, roomInfo['roomInfo']['pid'], text, nickName,self.bindId)
+    self.inputLabel.text = ''
+    self.inputComponent.value = ''
+    MatchCenterReport.ClickSendBulletBtn()
+end
+
+function mt:EnterFansBoxChatTip(bindId)
+    if not MatchCenterDataManager.IsAllowBullet() then
+        MatchCenterSetting.NoticeGameShowTips("弹幕系统维护中")
+        return
+    end
+    Logger.DEBUG("当前用户进入粉丝包厢提示语弹幕发送~")
+    -- local boxPlayerInfo=MatchCenterDataManager.GetBoxPlayerInfo()
+    -- self.playerName="该选手"
+    -- for k,v in pairs(boxPlayerInfo) do
+    --     if tonumber(v['id'])==bindId then
+    --         self.playerName=JsonManager.DecodeJson(v['info'])['clan_name']
+    --     end
+    -- end
+    local text="欢迎进入粉丝专属包厢"
+    local roomInfo = MatchCenterDataManager.GetRoomInfo()
+    local anchorId, livePlatId = MatchCenterDataManager.GetAnchorIdAndLivePlatId()
+    local nickName =  MatchCenterDataManager.GetNickName()  --MatchCenterSettings.WelcomeEnterFansBox
+    MatchCenterRequestHandler.SendBullet(anchorId, livePlatId, roomInfo['roomInfo']['pid'], text,nickName,bindId,true)
+    self.inputLabel.text = ''
+    self.inputComponent.value = ''
+    MatchCenterReport.ClickSendBulletBtn()
+end
+
+
+function mt:Clear()
+    self.textList:Clear()
+end
+---------------------------------------------
+
+function mt:Destroy()
+    
+    self:RemoveEvents()
+    self:RemoveEventsListener()
+    for k, _ in pairs(self) do
+		self[k] = nil
+    end
+end
+
+
+return mt

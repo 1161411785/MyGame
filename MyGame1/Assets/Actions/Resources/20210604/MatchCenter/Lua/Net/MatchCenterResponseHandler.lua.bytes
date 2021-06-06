@@ -1,0 +1,562 @@
+require "Common"
+require "JsonManager"
+require "EventDispatcher"
+
+local MatchCenterSetting =  require "MatchCenterSetting"
+
+local MatchCenterEvent  =  require "MatchCenterEvent"
+local MatchCenterDataManager  = require "MatchCenterDataManager"
+
+
+local Logger = Common.GetLogger()
+
+local MatchCenterResponseHandler = {}
+
+--解析返回数据
+local ParseLiveResponse = function(responseStr)
+    local json = JsonManager.DecodeJson(responseStr)
+
+    if json == nil or json['resp'] ==nil then
+        return nil
+    end
+    local resp = JsonManager.DecodeJson(json['resp'])
+
+    local headTable = resp["head"]
+    local bodyTable = resp["body"]
+    local returnCode = tonumber(bodyTable['ret'])
+    if returnCode ~= 0 then
+        return nil
+    end
+    if bodyTable["pandora_app_resp"] == nil or bodyTable["pandora_app_resp"]["ret"] ~= 0 then
+		Logger.DEBUG("[ParseLiveResult]活动信息出错")
+        return nil
+    end
+    return  bodyTable["pandora_app_resp"]
+end
+
+--解析潘多拉后台返回数据
+local ParseResponse = function(jsonStr)
+    local outerTbl = JsonManager.DecodeJson(jsonStr)
+
+    if outerTbl == nil then
+        Logger.DEBUG('--- parase json is null  ----')
+        return nil
+    end
+
+    -- 请求的协议没有正常返回，Common里构造的协议
+    if outerTbl['ret'] ~= 0 then
+        return nil
+    end
+
+    local responseTable = JsonManager.DecodeJson(outerTbl['resp'])
+    if responseTable == nil then
+        Logger.DEBUG('parse json no resp')
+        return nil
+    end
+
+    local bodyTable = responseTable['body']
+    if bodyTable == nil then
+        Logger.DEBUG('--- parase json no body  ----')
+        return nil
+    end
+    local bodyReturnCode = tonumber(bodyTable['ret'])
+    if bodyReturnCode < 0 then
+        Logger.DEBUG('--- body.ret < 0  ----')
+        return nil
+    end
+    return bodyTable.comp_resp
+end
+
+--解析返回数据
+local ParseNormalResponse = function(responseStr)
+    local json = JsonManager.DecodeJson(responseStr)
+
+    if json == nil or json['resp'] ==nil then
+        return nil
+    end
+    local resp = JsonManager.DecodeJson(json['resp'])
+
+    local headTable = resp["head"]
+    local bodyTable = resp["body"]
+    MatchCenterDataManager.UpdateServerTime(headTable["timestamp"],true)
+    local returnCode = tonumber(bodyTable['ret'])
+    if returnCode ~= 0 then
+        return nil
+    end
+    return  bodyTable
+end
+
+--解析paas数据
+local ParsePaasResponse = function(responseStr)
+    local json = JsonManager.DecodeJson(responseStr)
+    if json == nil then 
+        Logger.DEBUG('--- Paas 数据解析异常 ----')
+        return nil
+    end
+
+    if tonumber(json['ret']) ~= 0 then
+        Logger.DEBUG('--- Paas 数据解析异常 错误码: ' .. json['ret'])
+        return nil
+    end
+    local responseTable = JsonManager.DecodeJson(json["resp"])
+    return responseTable['body']['ams_resp']
+end
+
+
+
+-- 获取基础活动信息
+function MatchCenterResponseHandler.OnReceiveActivityInfo(json)
+    local activityInfo = {}
+    local data = ParseNormalResponse(json)
+    if data == nil or data['online_msg_info'] == nil or data['online_msg_info']['act_list'][1] == nil then
+        Logger.DEBUG("activity info online_msg_info is nil")
+        return false    
+    else
+        activityInfo['baseInfo'] = data['online_msg_info']['act_list'][1]
+    end
+
+    if data['contest_info']['data'] == nil or #data['contest_info']['data'] == 0 then
+        Logger.DEBUG("activity info contestlist is nil")
+        return false  
+    else
+        activityInfo['contestList'] = data['contest_info']['data']
+    end
+
+    if data['cfg'] == nil then
+        Logger.DEBUG("activity info cfg is nil")
+        return false  
+    else
+        activityInfo['extendInfo'] = data['cfg']
+     
+    end
+    Common.TablePrinter(activityInfo, "111", '3333')
+
+    MatchCenterDataManager.UpdateActivityInfo(activityInfo)
+    EventDispatcher.DispatchEvent(MatchCenterEvent.GetBaseInfo, activityInfo['extendInfo'])
+end
+
+-- 刷新基础活动信息
+function MatchCenterResponseHandler.OnRefreshActivityInfo(json)
+    local activityInfo = {}
+    Logger.DEBUG("activity info receive :" .. json)
+    local data = ParseNormalResponse(json)
+    Common.TablePrinter(data, "111", '~~')
+    if data == nil or data['online_msg_info'] == nil or data['online_msg_info']['act_list'][1] == nil then
+        Logger.DEBUG("activity info online_msg_info is nil")
+        return false    
+    else
+        activityInfo['baseInfo'] = data['online_msg_info']['act_list'][1]
+    end
+
+    if data['contest_info']['data'] == nil or #data['contest_info']['data'] == 0 then
+        Logger.DEBUG("activity info contestlist is nil")
+        return false  
+    else
+        activityInfo['contestList'] = data['contest_info']['data']
+    end
+
+    if data['cfg'] == nil then
+        Logger.DEBUG("activity info cfg is nil")
+        return false  
+    else
+        activityInfo['extendInfo'] = data['cfg']
+     
+    end
+    MatchCenterDataManager.UpdateActivityInfo(activityInfo)
+    EventDispatcher.DispatchEvent(MatchCenterEvent.RefreshRoomInfo, activityInfo['extendInfo'])
+end
+
+
+-- 首次拉取房间信息
+function MatchCenterResponseHandler.OnReceiveRoomInfo(json)
+    local data = ParseResponse(json)
+    if data == nil or data['ret'] ~= 0 or data['data'] == nil or data['data']['anchorList'] == nil then
+        Logger.DEBUG("room Indo is nil")
+        return
+    end
+    --------------amz add-------------------------
+    if data['data']['anchorList'][1] == nil then
+        Logger.DEBUG("room Indo is nil")
+        return
+    end
+    -----------------------------------------------
+    MatchCenterDataManager.UpdateRoomInfo(data['data']['anchorList'][1])
+    EventDispatcher.DispatchEvent(MatchCenterEvent.ActivityReady)
+end
+
+-- 刷新房间数据
+function MatchCenterResponseHandler.OnRefreshRoomInfo(json)
+    local data = ParseResponse(json)
+    if data == nil or data['ret'] ~= 0 or data['data'] == nil or data['data']['anchorList'] == nil then
+        Logger.DEBUG("room Indo is nil")
+        return
+    end
+    --------------amz add-------------------------
+    if data['data']['anchorList'][1] == nil then
+       Logger.DEBUG("room Indo is nil")
+       return
+    end
+    -----------------------------------------------
+    MatchCenterDataManager.UpdateRoomInfo(data['data']['anchorList'][1])
+end
+
+-- 发送弹幕回调
+function MatchCenterResponseHandler.OnReceiveSendBullet(json)
+
+    Logger.DEBUG("send bullet receive :" .. json)
+    local data = ParseResponse(json)
+    ------------amz add-----------
+    if data==nil then
+        return
+    end
+    ----------------------------
+    if tonumber(data['ret']) == 0 then
+        -- MatchCenterSetting.NoticeGameShowTips("弹幕发送成功")
+        ---------------amz add------------
+        Logger.DEBUG("弹幕发送成功")
+        ----------------------------------
+    else
+        -- MatchCenterSetting.NoticeGameShowTips("弹幕发送异常")
+        ---------------amz add------------
+        Logger.DEBUG("弹幕发送异常")
+        ----------------------------------
+    end
+end
+
+-- 观赛心跳回调
+function MatchCenterResponseHandler.OnReceiveHeartBeat(json)
+    Logger.DEBUG("Receive heart beat:" .. json)
+    local data = ParseNormalResponse(json)
+    if data ~= nil and data['audience_num'] ~= nil then
+        MatchCenterDataManager.UpdateViewPeople(data['audience_num'])
+        EventDispatcher.DispatchEvent(MatchCenterEvent.UpdateViewPeople)
+    end
+end
+
+-- 退出直播间回调
+function MatchCenterResponseHandler.OnReceiveQuitRoom(json)
+    Logger.DEBUG("Receive quit room:" .. json)
+end
+
+
+
+-- 赛程及回放数据
+function MatchCenterResponseHandler.OnReceiveContestList(json)
+
+    Logger.DEBUG("Receive Contest List:" .. json)
+
+    
+    local data = ParseNormalResponse(json)
+
+    Common.TablePrinter(data['data'], "22222222222222222222222", '~~')
+    -- local s = JsonManager.EncodeJson(data['data'])
+    -- print(s)
+    -- data = nil
+    local scheduleInfo = {}
+    if data == nil or data['data'] == nil or #data['data'] == 0 then
+        -- 特殊处理，拉不到赛程用本地数据
+        Common.Report(tostring(111), MatchCenterSettings.TNMIDReceiveBullet, 0)
+
+        Logger.DEBUG("activity info contestlist is nil")
+        local temp = '[{"contest_data":[{"is_subscirbe":"1","end_time":"1599303359","score":"0:0","clanA_info":{"clan_id":"20","honor":"第十六届无差别决赛选手\n第十七届无差别决赛选手","clan_name":"析夜","clan_short_name":"","type":"2","clan_logo":"\/\/down.pandora.qq.com\/images\/hyrz\/20200709140729\/D775C12017C0ADECC48AC6E58FFE15EA_1594274849.png","desc":"第十七届无差别决赛选手"},"stage":"八进四第二场","contest_name":"第十七届无差别总决赛","clanB_info":{"clan_id":"11","honor":"第十五届无差别决赛选手\n第十七届无差别决赛选手","clan_name":"尘埃","clan_short_name":"","type":"2","clan_logo":"\/\/down.pandora.qq.com\/images\/hyrz\/20200827100537\/A322D3BBF51ED2D640F266E7C1D71814_1598493937.png","desc":"第十七届无差别决赛选手"},"clanA_id":"20","m_desc":"","start_time":"1599302100","video_url":"","user_subscribe":"0","subcontest_id":"53","clanB_id":"11","contest_id":"7","m_type":"2"},{"is_subscirbe":"1","end_time":"1599306659","score":"0:0","stage":"中场","contest_name":"第十七届无差别总决赛","clanA_id":"","m_desc":"新忍发布会","start_time":"1599306300","video_url":"","user_subscribe":"0","subcontest_id":"56","clanB_id":"","contest_id":"7","m_type":"3"},{"is_subscirbe":"1","end_time":"1599311459","score":"0:0","stage":"季军赛","contest_name":"第十七届无差别总决赛","clanA_id":"","m_desc":"半决赛1-2场败者","start_time":"1599310200","video_url":"","user_subscribe":"0","subcontest_id":"59","clanB_id":"","contest_id":"7","m_type":"3"},{"is_subscirbe":"1","end_time":"1599306359","score":"0:0","clanA_info":{"clan_id":"2","honor":"第十五届无差别决赛选手\n第十七届无差别决赛选手","clan_name":"碧落天","clan_short_name":"","type":"2","clan_logo":"\/\/down.pandora.qq.com\/images\/hyrz\/20200827100428\/C5A98E6571AE665AB400BC39384458E5_1598493868.png","desc":"第十七届无差别决赛选手"},"stage":"八进四第四场","contest_name":"第十七届无差别总决赛","clanB_info":{"clan_id":"19","honor":"第十六届无差别决赛选手\n第十七届无差别决赛选手","clan_name":"讨","clan_short_name":"","type":"2","clan_logo":"\/\/down.pandora.qq.com\/images\/hyrz\/20200709140739\/A5DCFDC1C4614AAE90934F9096776310_1594274859.png","desc":"第十七届无差别决赛选手"},"clanA_id":"2","m_desc":"","start_time":"1599305100","video_url":"","user_subscribe":"0","subcontest_id":"55","clanB_id":"19","contest_id":"7","m_type":"2"},{"is_subscirbe":"1","end_time":"1599308459","score":"0:0","stage":"半决赛第一场","contest_name":"第十七届无差别总决赛","clanA_id":"","m_desc":"八进四1-2场胜者","start_time":"1599306600","video_url":"","user_subscribe":"0","subcontest_id":"57","clanB_id":"","contest_id":"7","m_type":"3"},{"is_subscirbe":"1","end_time":"1599313559","score":"0:0","stage":"冠军赛","contest_name":"第十七届无差别总决赛","clanA_id":"","m_desc":"半决赛1-2场胜者","start_time":"1599311700","video_url":"","user_subscribe":"0","subcontest_id":"60","clanB_id":"","contest_id":"7","m_type":"3"},{"is_subscirbe":"1","end_time":"1599309959","score":"0:0","stage":"半决赛第二场","contest_name":"第十七届无差别总决赛","clanA_id":"","m_desc":"八进四3-4场胜者","start_time":"1599308700","video_url":"","user_subscribe":"0","subcontest_id":"58","clanB_id":"","contest_id":"7","m_type":"3"},{"is_subscirbe":"1","end_time":"1599301800","score":"0:0","clanA_info":{"clan_id":"23","honor":"第十七届无差别决赛选手\n第十六届无差别决赛选手\n第十五届无差别决赛选手","clan_name":"荒芜","clan_short_name":"","type":"2","clan_logo":"\/\/down.pandora.qq.com\/images\/hyrz\/20200709140653\/01D59111A459AB05CCA33DA193DA5045_1594274813.png","desc":"第十七届无差别决赛选手"},"stage":"八进四第一场","contest_name":"第十七届无差别总决赛","clanB_info":{"clan_id":"12","honor":"第十五届无差别决赛选手\n第十七届无差别决赛选手","clan_name":"鼬神","clan_short_name":"","type":"2","clan_logo":"\/\/down.pandora.qq.com\/images\/hyrz\/20200827100551\/57112D329BB820A3A8D57D67154D08DD_1598493951.png","desc":"第十七届无差别决赛选手"},"clanA_id":"23","m_desc":"","start_time":"1599300600","video_url":"","user_subscribe":"1","subcontest_id":"52","clanB_id":"12","contest_id":"7","m_type":"2"},{"is_subscirbe":"1","end_time":"1599304859","score":"0:0","clanA_info":{"clan_id":"24","honor":"第十六届无差别决赛选手\n第十七届无差别决赛选手","clan_name":"无惜","clan_short_name":"","type":"2","clan_logo":"\/\/down.pandora.qq.com\/images\/hyrz\/20200709140639\/2B2BB7BD805EDE0BC02BDC52041C46A7_1594274799.png","desc":"第十七届无差别决赛选手"},"stage":"八进四第三场","contest_name":"第十七届无差别总决赛","clanB_info":{"clan_id":"18","honor":"第十六届无差别决赛选手\n第十七届无差别决赛选手","clan_name":"真白","clan_short_name":"","type":"2","clan_logo":"\/\/down.pandora.qq.com\/images\/hyrz\/20200709140749\/582D7E573FA6DD07B0988223E92C60C5_1594274869.png","desc":"第十七届无差别决赛选手"},"clanA_id":"24","m_desc":"","start_time":"1599303600","video_url":"","user_subscribe":"0","subcontest_id":"54","clanB_id":"18","contest_id":"7","m_type":"2"}],"contest_id":"7","contest_name":"第十七届无差别总决赛"}]'
+        local data1 = JsonManager.DecodeJson(temp)
+
+        Common.TablePrinter(data1, "333333333333333333333333333333", '~~')
+
+
+        for k, v in pairs(data1) do
+            for key, val in pairs(v['contest_data']) do
+                if tonumber(val['end_time']) > os.time() then
+                    table.insert(scheduleInfo, val)
+                end
+            end
+        end 
+        table.sort(scheduleInfo, function(a, b)
+            return a['start_time'] < b['start_time']
+        end)
+    else
+        -- for k, v in pairs(data['data']) do
+        --     for key, val in pairs(v['contest_data']) do
+        --         if tonumber(val['end_time']) > os.time() then
+        --             table.insert(scheduleInfo, val)
+        --         end
+        --     end
+        -- end 
+        scheduleInfo = data['data']
+        table.sort(scheduleInfo, function(a, b)
+            return a['contest_id'] > b['contest_id']
+        end)
+    end
+    MatchCenterDataManager.UpdateScheduleInfo(scheduleInfo)
+end
+
+-- 订阅赛程
+function MatchCenterResponseHandler.OnReceiveSubscribeMatch(successHandler, failedHandler, json)
+    Logger.DEBUG("Receive subscribe match:" .. json)
+    local data = ParseNormalResponse(json)
+    if data ~= nil and tonumber(data['ret']) == 0 then
+        successHandler()
+    else
+        failedHandler()
+    end
+end
+
+-- 取消订阅
+function MatchCenterResponseHandler.OnReceiveCancleSubscribeMatch(successHandler, failedHandler, json)
+    Logger.DEBUG("Receive cancle subscribe match:" .. json)
+    local data = ParseLiveResponse(json)
+    if data ~= nil and tonumber(data['ret']) == 0 then
+        successHandler()
+    else
+        failedHandler()
+    end
+end
+
+-- 赛事数据和选手排行回调
+function MatchCenterResponseHandler.OnReceiveGetMatchData(json)
+    Logger.DEBUG("Receive matchData:" .. json)
+    local data = ParsePaasResponse(json)
+    if data == nil or tonumber(data['code']) ~= 0 then 
+        Logger.DEBUG("paas receive error")
+        return false
+    else
+        MatchCenterDataManager.UpdateMatchData(data)
+    end
+end
+
+-- 新版观赛/签到任务回调
+function MatchCenterResponseHandler.OnReceiveTaskAwardList(successHandler,json)
+    Logger.DEBUG("Receive taskAward list:" .. json)
+    local data = ParsePaasResponse(json)
+    if data == nil or tonumber(data['code']) ~= 0 then 
+        Logger.DEBUG("paas receive error")
+        return false
+    end
+    MatchCenterDataManager.UpdateTaskInfo(data['taskData'])
+    MatchCenterDataManager.UpdateTaskRedPoint(tonumber(data['taskData']['redPoint']))
+    if EventDispatcher.HasEventListener(MatchCenterEvent.UpdateTaskRedPoint)  then
+        EventDispatcher.DispatchEvent(MatchCenterEvent.UpdateTaskRedPoint)
+    end
+    if successHandler then
+        successHandler()
+    end
+end
+
+-- 领取奖励
+function MatchCenterResponseHandler.OnReceiveGetTaskReword(successHandler, failedHandler , json)
+    Logger.DEBUG("Receive task getReword:" .. json)
+    local data = ParsePaasResponse(json)
+    if data == nil or tonumber(data['code']) ~= 0 then 
+        Logger.DEBUG("paas receive error")
+        failedHandler()
+        return false
+    else
+        if data['taskData'] ~= nil then
+            MatchCenterDataManager.UpdateTaskInfo(data['taskData']['taskList'])
+            MatchCenterDataManager.UpdateTaskRedPoint(tonumber(data['taskData']['redPoint']))
+            -- MatchCenterDataManager.SetMatchRedPoint(tonumber(data['taskData']['redPoint']))
+            EventDispatcher.DispatchEvent(MatchCenterEvent.UpdateTaskRedPoint)
+        end
+        successHandler()
+    end
+end
+
+-- -- 拉取任务列表
+-- function MatchCenterResponseHandler.OnReceiveTaskList(json)
+--     Logger.DEBUG("Receive task list:" .. json)
+--     local data = ParsePaasResponse(json)
+--     if data == nil or tonumber(data['code']) ~= 0 then 
+--         Logger.DEBUG("paas receive error")
+--         return false
+--     end
+--     MatchCenterDataManager.UpdateTaskInfo(data['taskData']['taskList'])
+--     MatchCenterDataManager.UpdateTaskRedPoint(tonumber(data['taskData']['redPoint']))
+--     if EventDispatcher.HasEventListener(MatchCenterEvent.UpdateTaskRedPoint)  then
+--         EventDispatcher.DispatchEvent(MatchCenterEvent.UpdateTaskRedPoint)
+--     end
+-- end
+
+-- -- 领取奖励
+-- function MatchCenterResponseHandler.OnReceiveGetTaskReword(successHandler, failedHandler , json)
+--     Logger.DEBUG("Receive task getReword:" .. json)
+--     local data = ParsePaasResponse(json)
+--     if data == nil or tonumber(data['code']) ~= 0 then 
+--         Logger.DEBUG("paas receive error")
+--         failedHandler()
+--         return false
+--     else
+--         if data['taskData'] ~= nil then
+--             MatchCenterDataManager.UpdateTaskInfo(data['taskData']['taskList'])
+--             MatchCenterDataManager.UpdateTaskRedPoint(tonumber(data['taskData']['redPoint']))
+--             -- MatchCenterDataManager.SetMatchRedPoint(tonumber(data['taskData']['redPoint']))
+--             EventDispatcher.DispatchEvent(MatchCenterEvent.UpdateTaskRedPoint)
+--         end
+--         successHandler()
+--     end
+-- end
+
+
+
+
+
+
+
+local function GetImgUrl(imgInfo)
+    local imgTbl = JsonManager.DecodeJson(imgInfo);
+    if imgTbl ~= nil then
+        return imgTbl.url;
+    end
+    return nil or "";
+end
+
+-- 公告活动
+function MatchCenterResponseHandler.OnReceiveNoticeActivityInfo(json)
+    local data = ParseNormalResponse(json)
+    local noticeInfo = {}
+    if data == nil or data['online_msg_info'] == nil or data['online_msg_info']['act_list'][1] == nil then
+        Logger.DEBUG("activity info online_msg_info is nil")
+    else
+        local level = MatchCenterDataManager.GetUserLevel()
+	    for k, v in pairs(data['online_msg_info']['act_list']) do
+		    if tonumber(v['announce_type']) == MatchCenterSetting.NoticeTypeWord then
+			
+		    elseif tonumber(v['announce_type']) == MatchCenterSetting.NoticeTypePic then
+			    v['announce_img'] = GetImgUrl(v['announce_img'])
+		    elseif tonumber(v['announce_type']) == MatchCenterSetting.NoticeTypePicWord then
+			    v['announce_img'] = GetImgUrl(v['announce_img1'])
+			    v['announce_text'] = v['announce_text1']
+			    v['announce_title'] = v['announce_title1']
+		    end
+		    if v['announce_img'] ~= nil then
+			    if not Common.IsImageCached(v['announce_img']) then
+				    Common.CacheImage(v['announce_img'])
+			    end
+		    end
+		    if tonumber(v['show_rank']) == 2 then
+			    if tonumber(v['specific_rank']) <= tonumber(level) then
+				    table.insert(noticeInfo, v)
+			    end
+		    else
+			    table.insert(noticeInfo, v)
+		    end
+	    end 
+	    table.sort(noticeInfo, function(a, b)
+		    return a['act_priority'] > b['act_priority']
+        end)
+        
+        MatchCenterDataManager.UpdateNoticeInfo(noticeInfo)
+
+        -- 统计红点数
+        local noticeRedCount = 0
+        for key, val in pairs(noticeInfo) do
+            local status = MatchCenterDataManager.GetNoticeRedPoint(val)
+            if tostring(status) == tostring(MatchCenterSetting.NoticeRedPointStatusUnread) then
+                noticeRedCount = noticeRedCount + 1
+            end
+        end
+        if noticeRedCount > 0 then
+            MatchCenterSetting.NoticeGameShowRedPoint(1)
+        end
+        MatchCenterDataManager.SetActivityRedPoint(noticeRedCount)
+        if EventDispatcher.HasEventListener(MatchCenterEvent.UpdateNavigationRedPoint)  then
+            EventDispatcher.DispatchEvent(MatchCenterEvent.UpdateNavigationRedPoint)
+        end
+    end
+end
+
+--------------------amz add------------
+-- 获取选手返回
+function MatchCenterResponseHandler.OnReceiveGetMatchPlayersList(successHandler, failedHandler, json)
+    Logger.DEBUG("Receive match players:" .. json)
+    local data = ParseLiveResponse(json)
+    if data ~= nil and tonumber(data['ret']) == 0 then
+        --successHandler()
+        --todo
+        if data['rsp_data']~=nil then
+            MatchCenterDataManager.UpdateBoxPlayerInfo(data['rsp_data'])
+        end
+    else
+        --failedHandler()
+    end
+end
+
+-- 反馈问题返回
+function MatchCenterResponseHandler.OnReceiveFeedback(json)
+    Logger.DEBUG("Receive feedback:" .. json)
+    local data = ParsePaasResponse(json)
+    if data == nil or tonumber(data['code']) ~= 0 then 
+        Logger.DEBUG("paas receive error")
+        MatchCenterSettings.NoticeGameShowTips(tostring(data['msg']))
+        --failedHandler()
+        return false
+    else
+        MatchCenterSettings.NoticeGameShowTips(tostring(data['msg']))
+        --successHandler()
+    end
+end
+
+-- 查询粉丝包厢返回 0成功查询，5未绑定。
+function MatchCenterResponseHandler.OnReceiveGetFanBox(json)
+    Logger.DEBUG("Receive getfanbox:" .. json)
+    local data = ParsePaasResponse(json)
+    if data == nil then
+        return
+    end
+    if tonumber(data['code']) ~= 0 then
+        Logger.DEBUG("paas receive error")
+       --todo
+       if tonumber(data['code'])==5 then
+            Logger.DEBUG("未绑定")
+            EventDispatcher.DispatchEvent(MatchCenterEvent.UpdateRenderFansBox)
+       else
+            Logger.ERROR("接口返回异常~")
+       end
+       MatchCenterDataManager.UpdateBoxBindId()
+        --return false
+    else
+       if data['jData']~=nil and tonumber(data['jData']['bindid'])~=nil then
+            local bindId=tonumber(data['jData']['bindid'])
+            --todo
+            MatchCenterDataManager.UpdateBoxBindId(bindId)
+            EventDispatcher.DispatchEvent(MatchCenterEvent.UpdateRenderFansBox,bindId)
+       end
+    end
+end
+
+-- 绑定粉丝包厢返回
+function MatchCenterResponseHandler.OnReceiveBindFanBox(json)
+    Logger.DEBUG("Receive bindfanbox:" .. json)
+    local data = ParsePaasResponse(json)
+    if data == nil then
+        return
+    end
+    if tonumber(data['code']) == 0 then
+        if data['jData']~=nil and tonumber(data['jData']['bindid'])~=nil then
+            local bindId=tonumber(data['jData']['bindid'])
+            MatchCenterDataManager.UpdateBoxBindId(bindId)
+            EventDispatcher.DispatchEvent(MatchCenterEvent.UpdateRenderFansBox,bindId,true)
+        end
+    else
+        MatchCenterSettings.NoticeGameShowTips(tostring(data['msg']))
+    end
+    
+end
+
+-- 取消绑定粉丝包厢返回
+function MatchCenterResponseHandler.OnReceiveCancelBindFanBox(json)
+    Logger.DEBUG("Receive cancelbindfanbox:" .. json)
+    local data = ParsePaasResponse(json)
+    if data == nil then
+        return
+    end
+    if tonumber(data['code']) == 0 then
+        MatchCenterDataManager.UpdateBoxBindId()
+        EventDispatcher.DispatchEvent(MatchCenterEvent.UpdateRenderFansBox)
+    else
+        MatchCenterSettings.NoticeGameShowTips(tostring(data['msg']))
+    end
+    
+end
+---------------------------------------
+
+return MatchCenterResponseHandler

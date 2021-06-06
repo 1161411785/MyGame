@@ -1,0 +1,330 @@
+require "Common"
+require "JsonManager"
+require "EventDispatcher"
+require "StringTool"
+local CSharpInterface     	= com.tencent.pandora.CSharpInterface
+
+local MatchCenterSetting   	= require "MatchCenterSetting"
+local MatchCenterDataManager = require "MatchCenterDataManager"
+local MatchCenterEvent = require "MatchCenterEvent"
+local MatchCenterRequestHandler = require "MatchCenterRequestHandler"
+local MatchCenterNavigation = require "MatchCenterNavigationPanel"
+local MatchCenterReport = require "MatchCenterReport"
+local MatchCenterTool = require "MatchCenterTools"
+local MatchCenterResponseHandler 	= require "MatchCenterResponseHandler"
+local Logger = Common.GetLogger()
+
+local mt = {}
+
+function mt:New()
+	local o = {}
+    setmetatable(o, self)
+    self.__index = self
+    return o
+end
+
+-- 初始化方法
+-- 配置初始化
+function mt:Init()
+	MatchCenterReport.RunLua()
+	if Common.GetTotalSwitch() == false then
+        Logger.DEBUG('全量开关关闭')
+        return
+    end
+
+    if Common.GetFunctionSwitch(MatchCenterSetting.SwitchName) == false then
+        Logger.DEBUG('赛事开关关闭')
+        return
+	end
+
+	-- 记录已经存在的tab
+	self.tabTable = {}
+
+	-- 导航栏
+	self.navigation = MatchCenterNavigation:New()
+
+	self:AddEvents()
+
+	MatchCenterRequestHandler.RequestActivityInfo()
+
+	-- LuaTimer.Add(500, function()
+	-- 请求赛事活动数据（旧版活动封面）
+	-- 	MatchCenterRequestHandler.GetNoticeActivity()
+	-- end)
+
+	LuaTimer.Add(500, function()
+		-- 请求选手数据
+		MatchCenterRequestHandler.GetPlayerData()
+	end)
+	LuaTimer.Add(800, function()
+		--MatchCenterRequestHandler.GetTaskList()
+		-- 新版观赛领奖请求
+		--MatchCenterRequestHandler.GetTaskAwardList()
+	end)
+
+	LuaTimer.Add(1000, function()
+		MatchCenterRequestHandler.GetContestList(MatchCenterDataManager.GetContestIds(),MatchCenterResponseHandler.OnReceiveContestList)
+	end)
+
+	MatchCenterSettings.NoticeGameGetUserInfo()
+end
+
+
+-- 删除掉原有的轮询触发器
+function mt:DeleteRequestTimer(timerId)
+	if timerId ~= nil then
+	    LuaTimer.Delete(timerId)
+	end
+end
+
+function mt:AddEvents()
+	EventDispatcher.AddEventListener(MatchCenterEvent.ActivityReady, self.HandleActivityReady, self)
+	EventDispatcher.AddEventListener(Common.GAME_COMMAND, self.OnGameCommand, self)
+	-- 切换tab页
+	EventDispatcher.AddEventListener(MatchCenterEvent.SwitchTab, self.SwitchTab, self)
+	EventDispatcher.AddEventListener(MatchCenterEvent.ClosePanel, self.ClosePanel, self)
+	EventDispatcher.AddEventListener(MatchCenterEvent.GetBaseInfo, self.GetRoomInfo, self)
+	EventDispatcher.AddEventListener(MatchCenterEvent.RefreshRoomInfo, self.RefreshRoomInfo, self)
+	EventDispatcher.AddEventListener(MatchCenterEvent.HideFromMatch, self.NoticeOutSideActHide, self)
+	EventDispatcher.AddEventListener(MatchCenterEvent.HideInnerAct, self.UpdateTabStatus, self)
+end
+
+function mt:RemoveEvents()
+	
+end
+
+
+function mt:HandleActivityReady()
+	
+	-- if MatchCenterTool.IsSimulator() then
+	-- 	return
+	-- end
+	MatchCenterSetting.NoticeGameShowMatchIcon("1")
+	------------ amz add初始化赛事中心入口红点优化---------------
+	LuaTimer.Add(3000,0,function ()
+		Logger.DEBUG("++++++6666 show function")
+		local allMatchRedNum = MatchCenterDataManager.GetMatchRedPoint()
+		if allMatchRedNum>0 then
+			MatchCenterSettings.NoticeGameShowRedPoint(1)
+		end
+	end)
+	
+	--------------------------------
+	MatchCenterReport.ActivityQualification()
+
+	local noticeCount = 10
+	self.NoticePopTimerId = LuaTimer.Add(0, 1000, function()
+		-- 通知拍脸活动，
+		MatchCenterSettings.NoticePandoraMatchReady()
+		noticeCount = noticeCount - 1
+		if noticeCount <= 0 then
+			if self.NoticePopTimerId ~= nil then
+				LuaTimer.Delete(self.NoticePopTimerId)
+				self.NoticePopTimerId = nil
+			end
+		end
+	end)
+end
+
+
+
+function mt:GetRoomInfo(data)
+	--MatchCenterRequestHandler.EnterRoom(0,  data['room'], data['studio'])
+	-------------------amz add-----------------------
+	local isTimingTime=self:CheckTime(data)
+	Logger.ERROR("++++++++++++++"..tostring(isTimingTime))
+	if isTimingTime then
+		MatchCenterRequestHandler.EnterRoom(0,  data['room_timing'], data['studio_timing'])
+	else
+		MatchCenterRequestHandler.EnterRoom(0,  data['room'], data['studio'])
+	end
+	---------------------------------------------------
+end
+
+function mt:RefreshRoomInfo(data)
+	--MatchCenterRequestHandler.RefreshRoomInfo(0,  data['room'], data['studio'])
+	-- ----------------amz add---------------------------
+	local isTimingTime=self:CheckTime(data)
+	Logger.ERROR("************"..tostring(isTimingTime))
+	if isTimingTime then
+		MatchCenterRequestHandler.RefreshRoomInfo(0,  data['room_timing'], data['studio_timing'])
+	else
+		MatchCenterRequestHandler.RefreshRoomInfo(0,  data['room'], data['studio'])
+	end
+	-- ---------------------------------------------------
+end
+
+------------------amz add-------------
+function mt:CheckTime(data)
+	if tonumber(data['studio_timing_start_time'])~=nil and tonumber(data['studio_timing_end_time'])~=nil then
+		local currentTime=os.time()
+		local timingStartTime=tonumber(data['studio_timing_start_time'])
+		local timingEndTime=tonumber(data['studio_timing_end_time'])
+		if currentTime>= timingStartTime and currentTime<= timingEndTime then
+			return true
+		end
+	end
+	return false
+end
+
+function mt:GetTimingRoomInfo(data)
+	Logger.ERROR("************".."164 ++++++++++++")
+	MatchCenterRequestHandler.EnterRoom(0,  data['room_timing'], data['studio_timing'])
+end
+
+function mt:RefreshTimingRoomInfo(data)
+	Logger.ERROR("************".."169 ++++++++++++")
+	MatchCenterRequestHandler.RefreshRoomInfo(0,  data['room_timing'], data['studio_timing'])
+end
+--------------------------------------
+
+function mt:OnGameCommand(jsonStr)
+    local msgTable = JsonManager.DecodeJson(jsonStr)
+    if msgTable == nil then
+        return
+    end
+
+	-- 游戏发送过来的open消息
+	-- 外部跳转
+	if msgTable['type'] == 'open' and msgTable['module'] ~= nil and msgTable['module'] == 'match' then
+		if MatchCenterTool.IsSimulator() then
+			MatchCenterSettings.NoticeGameShowTips("请前往移动端查看")
+			return
+		end
+		--MatchCenterSettings.NoticeGameSwitchBgm(false)   --test
+		self:OpenPanel(MatchCenterSetting.PanelName, msgTable)
+		return
+	end
+	-- 处理视频回调事件
+	if msgTable['type'] == "videoMsgCallback" then
+		if EventDispatcher.HasEventListener(MatchCenterEvent.VideoMsgCallback) then
+			EventDispatcher.DispatchEvent(MatchCenterEvent.VideoMsgCallback, msgTable)
+		end
+		
+		if EventDispatcher.HasEventListener(MatchCenterEvent.FullVideoMsgCallback) then
+			EventDispatcher.DispatchEvent(MatchCenterEvent.FullVideoMsgCallback, msgTable)
+		end
+
+		if tonumber(msgTable['eventId']) == MatchCenterSetting.PE_APP_PAUSED or tonumber(msgTable['eventId']) == MatchCenterSetting.FFP_MSG_APP_PAUSED then
+			if EventDispatcher.HasEventListener(MatchCenterEvent.OnAppPause) then
+				EventDispatcher.DispatchEvent(MatchCenterEvent.OnAppPause, msgTable)
+			end
+		end
+
+		-- 断网
+		if tonumber(msgTable['eventId']) == MatchCenterSetting.PE_WARNING_RECONNECT or tonumber(msgTable['eventId']) == MatchCenterSetting.PE_ERR_NET_DISCONNECT then
+			Common.Report("网络状态不佳或者断网", MatchCenterSettings.TNMIDStreamBroke, 2)
+		end
+		
+	end
+	if  msgTable['type'] == "query" and msgTable['content'] ~= nil and msgTable['content'] == "roleInfo" then
+		local userInfo = {}
+		userInfo.nickName = msgTable['charac_name']
+		userInfo.headUrl = msgTable['head_url']
+		userInfo.level = msgTable['level']
+		MatchCenterDataManager.SetUserInfo(userInfo)
+	end
+	-- 开奖活动相关监听
+	if msgTable['type'] == "noticeMatchLottery" then
+		MatchCenterDataManager.SetMatchLotteryInfoByNotice(msgTable)
+		if EventDispatcher.HasEventListener(MatchCenterEvent.OnNoticeMatchLottery) then
+			EventDispatcher.DispatchEvent(MatchCenterEvent.OnNoticeMatchLottery)
+		end
+	end
+
+	-- 更新菜单栏信息
+	-- 增加菜单，处理红点等
+	if msgTable['type'] == "noticeMatchUpdateNav" then
+		MatchCenterDataManager.SetMatchNavByNotice(msgTable)
+		-- if EventDispatcher.HasEventListener(MatchCenterEvent.OnNoticeMatchLottery) then
+		-- 	EventDispatcher.DispatchEvent(MatchCenterEvent.OnNoticeMatchLottery)
+		-- end
+	end
+
+	-- 赛事内页签互相跳转
+	if msgTable['type'] == "jumpFromMatch" then
+		if EventDispatcher.HasEventListener(MatchCenterEvent.OnNoticeMatchJump) then
+			EventDispatcher.DispatchEvent(MatchCenterEvent.OnNoticeMatchJump, msgTable)
+		end
+	end
+end
+
+
+-- 打开面板
+function mt:OpenPanel(panelName, params)
+	local panelLoaded = function(obj)
+		self:OnPanelCreated(obj, panelName, params)
+	end
+	Common.CreatePanel(panelName, panelLoaded)
+	MatchCenterReport.OpenPanel()
+end
+
+-- 关闭面板
+function mt:ClosePanel()
+	MatchCenterReport.ClosePanel()
+	MatchCenterRequestHandler.QuiteRoom()
+	for k,v in pairs(self.tabTable) do
+		self.tabTable[k]:Destroy()
+	end
+	self.tabTable = {}
+	self.navigation:Destroy()
+	MatchCenterDataManager.Clear()
+	MatchCenterSettings.NoticeGameSwitchBgm(true)
+	if self.NoticePopTimerId ~= nil then
+		LuaTimer.Delete(self.NoticePopTimerId)
+	end
+	Common.DestroyPanel(MatchCenterSetting.PanelName)
+end
+
+
+function mt:OnPanelCreated(obj, panelName, params)
+	Common.TablePrinter(params, '[controller]:params', '11111111111');
+	self.navigation:Init(obj, params)
+	MatchCenterReport.ShowPanel()
+	-- gyq add
+	local anchorId, livePlatId = MatchCenterDataManager.GetAnchorIdAndLivePlatId()
+	if anchorId and livePlatId then
+		MatchCenterReport.ShowlivePlat(anchorId,livePlatId)
+	end
+	------
+end
+
+
+-- 导航栏切换
+function mt:SwitchTab(panel, gameObejct, jumpParams)
+
+	Common.TablePrinter(jumpParams, '333333', '4444444');
+
+	if self.tabTable[panel] == nil then --面板不存在，一般是外部跳转过来
+		local class = require("MatchCenter" .. panel .. "Panel")
+		local obj = class:New()
+		obj:Init(gameObejct, jumpParams)
+		self.tabTable[panel] = obj
+	end
+	self:UpdateTabStatus(panel, jumpParams)
+end
+
+-- 更新tab状态
+function mt:UpdateTabStatus(panel, jumpParams)
+	for k , v in pairs(self.tabTable) do
+		if k ~= panel then
+			self.tabTable[k]:SetActive(false)
+		end
+	end
+	if panel ~= nil and self.tabTable[panel] ~= nil then
+		self.tabTable[panel]:SetActive(true)
+		self.tabTable[panel]:HandleJump(jumpParams)
+	end
+end
+
+
+function mt:UpdateNavigationRedPoint()
+	self.navigation:UpdateRedPoint()
+end
+
+
+function mt:NoticeOutSideActHide()
+	MatchCenterSettings.NoticeOutSideActHidePanel()
+end
+
+return mt

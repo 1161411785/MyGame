@@ -1,0 +1,162 @@
+require ("Common")
+
+local MatchCenterSetting = require("MatchCenterSetting")
+local MatchCenterRequestHandler = require("MatchCenterRequestHandler")
+
+local MatchCenterDataManager = require("MatchCenterDataManager")
+
+local MatchCenterReport = require("MatchCenterReport")
+local MatchCenterTools          = require("MatchCenterTools")
+
+local Logger = Common.GetLogger()
+
+local mt = {}
+local submitFlag=0
+
+function mt:New()
+    local o = {}
+    setmetatable(o, mt)
+    self.__index = self
+    return o
+end
+
+function mt:Init(gameObject)
+    self.gameObject = gameObject
+    self.transform  = self.gameObject.transform
+    --todo
+    self.questTypeGrid=self.transform:Find("Container_content/Container_questionType/Container_toggle").gameObject
+    self.questTypeModel=self.transform:Find("Container_content/Container_questionType/toggleModel").gameObject
+    self.closeBtn=self.transform:Find("Container_content/Sprite_closeBtn"):GetComponent("UIButton").gameObject
+    self.submitBtn=self.transform:Find("Container_content/Sprite_submit"):GetComponent("UIButton").gameObject
+    self.questionDes=self.transform:Find("Container_content/Container_questionDes/Sprite_input_bg/Label").gameObject
+    self.contact=self.transform:Find("Container_content/Container_contact/Sprite_input_bg/Label").gameObject
+
+    self.isRender = false
+    self.buttonFunctionMap = {}
+
+end
+
+function mt:AddEvents()
+    for button, response in pairs(self.buttonFunctionMap) do
+		if button ~= nil and button.gameObject ~= nil  and Slua.IsNull(button) == false then
+			UIEventListener.Get(button).onClick = response
+		end
+    end
+end
+
+
+
+function mt:RemoveEvents()
+    for button, response in pairs(self.buttonFunctionMap) do
+		if button ~= nil and button.gameObject ~= nil  and Slua.IsNull(button) == false then
+			UIEventListener.Get(button).onClick = nil
+		end
+	end
+	self.buttonFunctionMap = {};
+end
+
+
+function mt:Render()
+    --Logger.DEBUG("++++++++++++++++++++++ render feedback")
+    self.selectType=0
+    --问题类型展示
+    local questionType=self:GetQuestionTypeText()
+    for i=1,10 do
+        local instance=Common.CloneAndAddToParent(self.questTypeModel,"questType_"..i,self.questTypeGrid)
+        instance:SetActive(true)
+        instance.transform:Find("Label"):GetComponent("UILabel").text=questionType[i]
+        
+        if i<=4 then
+            instance.transform.localPosition=UnityEngine.Vector3(-312+169*(i-1),34,0)
+        elseif i>4 and i<=8 then
+            instance.transform.localPosition=UnityEngine.Vector3(-312+169*(i-5),-2,0)
+        elseif i>8 and i<=12 then
+            instance.transform.localPosition=UnityEngine.Vector3(-312+169*(i-9),-38,0)
+        end
+        
+    end
+
+
+    --按钮绑定
+    self.buttonFunctionMap[self.closeBtn]=function() 
+        Common.PlaySound('9904')    --播放音效
+        self:OnCloseFeedbackClick() 
+    end
+    self.buttonFunctionMap[self.submitBtn]=function() 
+        Common.PlaySound('9901')    --播放音效
+        self:OnSubmitBtnClick() 
+    end
+
+    self:AddEvents()
+end
+
+function mt:GetQuestionTypeText()
+    local tbl={[1]="无法播放",[2]="视频卡顿",[3]="弹幕问题",[4]="吐槽建议",[5]="加载异常",[6]="崩溃出错",[7]="直播内容",[8]="竞猜反馈",[9]="弹窗骚扰",[10]="活动异常"}
+    return tbl
+end
+
+function mt:OnCloseFeedbackClick()
+    --Logger.DEBUG("++++++++++++++++++++++ close feedback")
+    if tonumber(self.questTypeGrid.transform.childCount)~=0 then
+        for i=1,tonumber(self.questTypeGrid.transform.childCount) do
+            if self.questTypeGrid.transform:GetChild(i-1).gameObject:GetComponent("UIToggle").value==true then
+                self.questTypeGrid.transform:GetChild(i-1).gameObject:GetComponent("UIToggle"):SetValue(false)
+            end
+        end
+        self.selectType=0
+   end
+    self.questionDes:GetComponent("UIInput").value=""
+    self.contact:GetComponent("UIInput").value=""
+    self:SetActive(false)
+end
+
+function mt:OnSubmitBtnClick()
+    --Logger.DEBUG("++++++++++++++++++++++ submit feedback")
+
+    if submitFlag==0 then
+        if tonumber(self.questTypeGrid.transform.childCount)~=0 then
+            for i=1,tonumber(self.questTypeGrid.transform.childCount) do
+                if self.questTypeGrid.transform:GetChild(i-1).gameObject:GetComponent("UIToggle").value==true then
+                    self.selectType=i
+                end
+            end
+        end
+        Logger.DEBUG("******** "..self.selectType.." ********* "..self.questionDes:GetComponent("UIInput").value.."*******"..self.contact:GetComponent("UIInput").value)
+        if MatchCenterTools.SubStringGetTotalIndex(self.questionDes:GetComponent("UIInput").value)<10 then
+                MatchCenterSettings.NoticeGameShowTips("请填写至少十字具体描述哦~")
+                return
+        end
+        local questionDes=MatchCenterTools.EncodeURI(self.questionDes:GetComponent("UIInput").value)
+        local contact=MatchCenterTools.EncodeURI(self.contact:GetComponent("UIInput").value)
+        --todo 过滤,恢复
+        MatchCenterRequestHandler.FeedbackQuestion(self.selectType,questionDes,contact)
+        submitFlag=1
+        self.submitTime=LuaTimer.Add(1000,0, function()
+            submitFlag=0
+            LuaTimer.Delete(self.submitTime)
+            self.submitTime=nil
+        end)
+    end
+end
+
+function mt:SetActive(flag)
+    if flag then
+        if not self.isRender then
+            self:Render()
+            self.isRender = true
+        end
+        --MatchCenterReport.ClickScheduleTab()
+    end
+    self.gameObject:SetActive(flag)
+end
+
+
+function mt:Destroy()
+    self:RemoveEvents()
+    for k, _ in pairs(self) do
+		self[k] = nil
+    end 
+end
+
+
+return mt

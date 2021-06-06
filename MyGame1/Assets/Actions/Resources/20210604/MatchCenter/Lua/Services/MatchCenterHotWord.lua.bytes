@@ -1,0 +1,145 @@
+-- 热词
+require "Common"
+require "JsonManager"
+require "EventDispatcher"
+
+local MatchCenterRequestHandler 	= require("MatchCenterRequestHandler")
+local MatchCenterDataManager 		= require("MatchCenterDataManager")
+local MatchCenterEvent 				= require("MatchCenterEvent")
+local MatchCenterSetting 			= require("MatchCenterSetting")
+local MatchCenterTools 				= require("MatchCenterTools")
+local MatchCenterReport 			= require("MatchCenterReport")
+local Logger 						= Common.GetLogger()
+local mt 							= {}
+
+
+function mt:New(o)
+	o = o or {}
+	setmetatable(o, self)
+	self.__index = self
+	return o
+end
+
+-- 初始化，需要使用的变量初始化时赋值好
+function mt:Init(gameObject)
+	self.gameObject = gameObject
+	self.transform  = self.gameObject.transform
+
+	self.template	= self.transform:Find("Container_hotword_template").gameObject
+	self.gridObj = self.transform:Find("Sprite/Scroll View/Grid").gameObject
+	self.grid = self.gridObj:GetComponent("UIGrid")
+
+	self.closeBtn = self.transform:Find("Sprite_bg").gameObject:GetComponent("UIButton")
+
+	self.isRender = false
+	self.buttonFunctionMap = {}
+	self.lastSendTime = 0
+end
+
+
+function mt:AddEvents()
+    for button, response in pairs(self.buttonFunctionMap) do
+		if button ~= nil and button.gameObject ~= nil  and Slua.IsNull(button) == false then
+			UIEventListener.Get(button).onClick = nil     --amz add
+			UIEventListener.Get(button).onClick = response
+		end
+    end
+end
+
+
+function mt:RemoveEvents()
+    for button, response in pairs(self.buttonFunctionMap) do
+		if button ~= nil and button.gameObject ~= nil  and Slua.IsNull(button) == false then
+			UIEventListener.Get(button).onClick = nil
+		end
+	end
+	self.buttonFunctionMap = {};
+end
+
+
+function mt:Render(bindId)
+	if tonumber(self.gridObj.transform.childCount)~=0 then
+		for i=1,tonumber(self.gridObj.transform.childCount) do
+			UnityEngine.GameObject.Destroy(self.gridObj.transform:GetChild(i-1).gameObject)
+		end
+   end
+	local hotWords = MatchCenterSetting.HotWords
+	--Logger.DEBUG("********66******")
+	self.item={}
+	for k , v in pairs(hotWords) do
+		self.item[k] = UnityEngine.GameObject.Instantiate(self.template)
+        self.item[k].name = "Container_hotword_" .. k
+		self.item[k].transform:SetParent(self.gridObj.transform, false)
+		self.item[k].transform:Find("Label").gameObject:GetComponent("UILabel").text = tostring(v)
+		self.item[k].gameObject:SetActive(true)
+		self.item[k].transform.localPosition =  UnityEngine.Vector3(0, -42*(k - 1), 0)      --amz change -32 -> -42
+		self.item[k].transform.localScale = UnityEngine.Vector3.one
+		
+	end
+	self.grid:Reposition()
+	self:UpdateEventBind(bindId)        --amz change  刷新每次热词弹幕bindid
+end
+
+-----------------amz change--------------
+function mt:UpdateEventBind(bindId)
+	local hotWords = MatchCenterSetting.HotWords
+	for k , v in pairs(hotWords) do
+		self.buttonFunctionMap[self.item[k].transform:Find("Label").gameObject:GetComponent("UIButton").gameObject] = function()
+			---------------amz add----------
+			if bindId==nil then
+				self:SendToChat(v)
+			else
+				self:SendToChat(v,bindId)
+			end
+			---------------------------------
+		end
+	end
+	self.buttonFunctionMap[self.closeBtn.gameObject] = function()
+		Common.PlaySound('9930')    --播放音效
+		self:SetActive(false)
+	end
+	self:AddEvents()
+end
+--------------------------------------
+function mt:SendToChat(text,bindId)
+	local t = tonumber(os.time()) - self.lastSendTime
+	if t < 3 then
+		MatchCenterSetting.NoticeGameShowTips("发言过于频繁，请".. math.ceil(t) .."秒后再试")
+		return
+	end
+
+	local roomInfo = MatchCenterDataManager.GetRoomInfo()
+    local anchorId, livePlatId = MatchCenterDataManager.GetAnchorIdAndLivePlatId()
+	local nickName =  MatchCenterDataManager.GetNickName()
+	MatchCenterRequestHandler.SendBullet(anchorId, livePlatId, roomInfo['roomInfo']['pid'], text, nickName,bindId)
+	self:SetActive(false)
+	self.lastSendTime = tonumber(os.time())
+end
+
+
+function mt:SetActive(flag,bindId)
+	if not self.isRender then
+		self:Render(bindId)
+		self.isRender = true
+	else
+		self:UpdateEventBind(bindId)        --amz change  刷新每次热词弹幕bindid
+	end
+	if not flag then
+		self.transform.parent:Find("Sprite_hotWord/Sprite_pointer").rotation=UnityEngine.Quaternion.Euler(0,0,180)
+	end
+    self.gameObject:SetActive(flag)
+end
+
+
+-- 面板对象销毁
+-- 销毁在initPanel中声明的对象
+-- 统一声明，统一销毁，以防漏销导致内存泄漏
+
+function mt:Destroy()	
+	self:RemoveEvents()
+	for k, _ in pairs(self) do
+		self[k] = nil
+	end 
+end
+
+return mt

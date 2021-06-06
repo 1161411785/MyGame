@@ -1,0 +1,68 @@
+
+
+local MatchCenterEvents = {}
+
+MatchCenterEvents.ActivityReady = "MATCH_ACTIVITY_READY"
+
+MatchCenterEvents.OpenPanel = "MATCH_OPEN_PANEL"
+
+MatchCenterEvents.ClosePanel = "MATCH_CLOSE_PANEL"
+
+MatchCenterEvents.SwitchTab = "MATCH_SWITCH_TAB" -- 导航页切换tab
+
+MatchCenterEvents.SwitchTabToH5 = "MATCH_SWITCH_TAB_TO_H5" -- 导航页切换tab
+
+MatchCenterEvents.SwitchToggle = "MATCH_SWITCH_TOGGLE"
+
+MatchCenterEvents.SwitchTabOut = "MATCH_SWITCH_TAB_OUT" --导航页切出
+
+MatchCenterEvents.RoomReady = "MATCH_ROOM_READY" -- 拉取房间信息
+
+MatchCenterEvents.VideoMsgCallback = "MATCH_VIDEO_MSG_CALLBACK"
+
+MatchCenterEvents.FullVideoMsgCallback = "MATCH_FULL_VIDEO_MSG_CALLBACK"
+
+MatchCenterEvents.PauseFor4G = "MATCH_PAUSE_FOR_4G"
+
+MatchCenterEvents.OnUpdateChatArea = "MATCH_UPDATE_CHAT_AREA"
+
+MatchCenterEvents.SendBullet = "MATCH_SEND_BULLET"
+
+MatchCenterEvents.UpdateTaskRedPoint = "MATCH_UPDATE_TASK_POINT"
+
+MatchCenterEvents.UpdateViewPeople = "MATCH_UPDATE_VIEW_PEOPLE"
+
+MatchCenterEvents.UpdateNavigationRedPoint = "MATCH_UPDATE_NAVIGATION_RED_POINT"
+
+MatchCenterEvents.GetBaseInfo = "MATCH_BASE_INFO_GET"
+
+MatchCenterEvents.RefreshRoomInfo = "MATCH_REFRESH_ROOM_INFO"
+
+-------------amz add---------------
+MatchCenterEvents.HasRefreshRoomInfo="HAS_REFRESH_ROOM_INFO" --已经刷新完成房间信息
+
+MatchCenterEvents.UpdateRenderFansBox="UPDATE_RENDER_FANSBOX" --刷新渲染粉丝包厢
+
+MatchCenterEvents.GetCurrentTab="GET_CURRENT_TAB" --获取当前是大厅还是粉丝包厢
+
+MatchCenterEvents.UpdateHideTabFromNav="UPDATE_HIDE_TAB_FROM_NAV" --刷新导航栏外部活动入口隐藏
+--- gyqguo add
+MatchCenterEvents.UpdateServerTime = "MATCH_SERVER_TIME"
+
+MatchCenterEvents.UpdatePlayerStatus = "MATCH_Player_Status"
+-----------------------------------
+
+MatchCenterEvents.OnAppPause = "MATCH_ON_APP_PAUSE"
+
+MatchCenterEvents.OnNetBreak = "MATCH_ON_NET_BREAK"
+
+MatchCenterEvents.OnNoticeMatchLottery = "MATCH_ON_NOTICE_LOTTERY"
+
+MatchCenterEvents.HideFromMatch = "MATCH_NOTICE_HIDE_PANLE"
+
+MatchCenterEvents.HideInnerAct = "MATCH_NOTICE_HIDE_INNER_PANLE"
+
+MatchCenterEvents.OnNoticeMatchJump = "MATCH_NOTICE_JUMP_MATCH" -- 赛事内互相跳转
+
+
+return MatchCenterEvents

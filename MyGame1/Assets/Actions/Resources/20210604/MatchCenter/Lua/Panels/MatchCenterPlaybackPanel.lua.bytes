@@ -1,0 +1,615 @@
+-- 活动中心面板
+require "Common"
+require "JsonManager"
+require "EventDispatcher"
+
+
+local MatchCenterRequestHandler = require("MatchCenterRequestHandler")
+local MatchCenterResponseHandler 	= require ("MatchCenterResponseHandler")
+local MatchCenterDataManager = require("MatchCenterDataManager")
+local MatchCenterEvent = require("MatchCenterEvent")
+local MatchCenterSetting = require("MatchCenterSetting")
+local MatchCenterTools = require("MatchCenterTools")
+local MatchCenterReport = require("MatchCenterReport")
+local Logger = Common.GetLogger()
+local UserData = Common.GetUserData()
+
+local mt = {}
+
+
+function mt:New(o)
+	o = o or {}
+	setmetatable(o, self)
+	self.__index = self
+	return o
+end
+
+function mt:Init(gameObject)
+
+	self.gameObject = gameObject.transform:Find("Container_playback").gameObject;
+	self.transform  = self.gameObject.transform;
+	self.isRender = false
+	self.curTogglePanel = 0 --0 为赛事回放页面 1为选手数据页面
+	self.curSelectMatchId = 0
+	self.buttonFunctionMap = {}
+
+	-- 公用部分
+	self.publicObj = self.transform:Find("Container_common").gameObject
+	self.upScrillView = self.transform:Find("Container_common/Scroll View").gameObject
+	self.publicObjGrid = self.transform:Find("Container_common/Scroll View/Grid").gameObject
+	self.progressLine = self.transform:Find("Container_common/Scroll View/Sprite_line").gameObject
+	self.publicObjItem = self.transform:Find("Container_common/Scroll View/Grid/Container_item").gameObject
+	self.publicObjTab = self.transform:Find("Container_common/Container_tab").gameObject
+	self.tabLeft = self.transform:Find("Container_common/Container_tab/Container_left").gameObject
+	self.tabRight = self.transform:Find("Container_common/Container_tab/Container_right").gameObject
+
+
+	-- 回放页面
+	self.playbackPanel = self.transform:Find("Container_playback").gameObject
+	self.downScrollView = self.transform:Find("Container_playback/Scroll View").gameObject
+	self.playbackUpTab = self.transform:Find("Container_playback/Scroll View/Container_Tab").gameObject
+	self.playbackTabTem = self.transform:Find("Container_playback/Scroll View/Container_Tab/Container_tabTem").gameObject
+
+	self.playbackTable = self.transform:Find("Container_playback/Scroll View/Table").gameObject
+	self.playbackDateItem = self.transform:Find("Container_playback/Scroll View/Table/Grid_dateItem").gameObject
+	self.playbacklteItem = self.transform:Find("Container_playback/Scroll View/Table/Grid_dateItem/Container_item").gameObject
+
+
+	-- 选手数据
+	self.playerDataPanel = self.transform:Find("Container_playerData").gameObject
+	self.playerLeft = self.transform:Find("Container_playerData/Container_left").gameObject
+	self.playerRight = self.transform:Find("Container_playerData/Container_right").gameObject
+	self.playerScrollView = self.transform:Find("Container_playerData/Container_right/Container_down/Scroll View").gameObject
+	self.playerGrid = self.transform:Find("Container_playerData/Container_right/Container_down/Scroll View/Grid").gameObject
+	self.playItem = self.transform:Find("Container_playerData/Container_right/Container_down/Scroll View/Grid/Container_item").gameObject
+
+end
+
+-- 切换回放/选手页面
+function mt:ToggleSelect()
+	-- 渲染tab栏按钮，进行切换页面
+	self.buttonFunctionMap[self.tabLeft] = function()
+		MatchCenterReport.ClickPlayBack() --  回放页面点击上报
+		self.playbackPanel:SetActive(true)
+		self.playerDataPanel:SetActive(false)
+		self.curTogglePanel = 0
+		local isFailed = self:RenderRecord(self.curSelectMatchId)
+		if isFailed then
+			-- 如果没有赛程切换回赛事回放
+			self.playbackPanel:SetActive(false)
+			self.playerDataPanel:SetActive(true)
+			self.curTogglePanel = 1
+			self.tabRight.transform:GetComponent("UIToggle").value = true
+			MatchCenterSettings.NoticeGameShowTips("暂无数据，敬请期待！")
+		end
+	end
+	self.buttonFunctionMap[self.tabRight] = function()
+		MatchCenterReport.ClickMatchData() -- 赛事数据点击上报
+		self.playbackPanel:SetActive(false)
+		self.playerDataPanel:SetActive(true)
+		self.curTogglePanel = 1
+		self.matchData = MatchCenterDataManager.GetMatchData()
+		if not self.matchData then
+			-- 如果没有数据切换回赛事回放
+			self.playbackPanel:SetActive(true)
+			self.playerDataPanel:SetActive(false)
+			self.curTogglePanel = 0
+			MatchCenterSettings.NoticeGameShowTips("网络异常，请稍后重试")
+			MatchCenterRequestHandler.GetPlayerData()
+			return
+		end
+		self:SettlePlayerData(self.matchData["data"])
+		--self:RenderPlayerData()
+		local isFailed = self:RenderPlayer(self.curSelectMatchId)
+		if isFailed then
+			-- 如果没有赛程切换回赛事回放
+			self.playbackPanel:SetActive(true)
+			self.playerDataPanel:SetActive(false)
+			self.curTogglePanel = 0
+			self.tabLeft.transform:GetComponent("UIToggle").value = true
+			MatchCenterSettings.NoticeGameShowTips("暂无数据，敬请期待！")
+		end
+	end
+end
+
+-- 处理日期格式
+function mt:SettleDate(time)
+    local year = os.date("%y",time)
+    local month = os.date("%m",time)
+    local day = os.date("%d",time)
+    local hour = os.date("%H",time)
+    local min = os.date("%M",time)
+    local week = os.date("%w",time)
+    local weekTab = {"星期一","星期二","星期三","星期四","星期五","星期六"} weekTab[0] = "星期日"
+    week = weekTab[tonumber(week)]
+    return year, tostring(tonumber(month)), tostring(tonumber(day)), hour, min, week
+end
+
+-- 回放页面：处理回放数据
+function mt:SettleMatchData(contest_id)
+    local scheduleInfo = MatchCenterDataManager.GetScheduleInfo()
+    local curMatchTable = nil
+    -- 获取当前赛事数据
+    for k,v in pairs(scheduleInfo) do
+        if tostring(contest_id) == tostring(v["contest_id"]) then
+            curMatchTable = v["contest_data"]
+        end
+    end
+	if not curMatchTable then
+		Logger.DEBUG("暂未开放，敬请期待")
+		return false
+	end
+    table.sort(curMatchTable, function(a,b)
+        return a["start_time"] < b["start_time"]
+    end)
+    -- 整理赛事数据结构
+    local lastDate = nil
+    local settleMatchTable = {}
+    for k,v in pairs(curMatchTable) do
+        local year, month, day, hour, min, week = self:SettleDate(v["start_time"])
+        v["matchDate"] =month.."月"..day.."日"
+        v["curWeek"] = week
+        v["title_time"] = hour..":"..min
+        if not lastDate or lastDate ~= v["matchDate"] then
+            lastDate = v["matchDate"]
+            settleMatchTable[os.date("%m%d",v["start_time"])] = {}
+        end
+        table.insert(settleMatchTable[os.date("%m%d",v["start_time"])],v)
+    end
+    local sortMatchTab = {}
+    for k,v in pairs(settleMatchTable) do
+        table.insert(sortMatchTab, k)
+    end
+    table.sort(sortMatchTab, function(a,b)
+        return a < b
+    end)
+    Common.TablePrinter(settleMatchTable, "Schedule150++++++++++++++")
+    return settleMatchTable, sortMatchTab
+end
+
+-- 渲染赛事公共时间轴
+function mt:Render()
+	self.playbackPanel:SetActive(true)
+	self.playerDataPanel:SetActive(false)
+	local scheduleInfo = MatchCenterDataManager.GetScheduleInfo()
+	local actInfo = MatchCenterDataManager.GetActivityInfo()
+	local contestInfo = actInfo["contestList"]
+	if scheduleInfo == nil or #scheduleInfo == 0 then
+		MatchCenterSettings.NoticeGameShowTips("网络异常，请稍后重试")
+		MatchCenterRequestHandler.GetContestList(MatchCenterDataManager.GetContestIds(),MatchCenterResponseHandler.OnReceiveContestList)
+        return
+    end
+	if contestInfo == nil or #contestInfo == 0 then
+		MatchCenterSettings.NoticeGameShowTips("网络异常，请稍后重试")
+        Logger.DEBUG("playBack_contestInfo:无赛程数据")
+        return
+    end
+	-- 排序
+	table.sort(contestInfo, function(a,b)
+		return tonumber(a["start_time"]) < tonumber(b["start_time"])
+	end)
+    Common.TablePrinter(contestInfo,"contestInfo:")
+
+    -- 没有相关赛程的数据不展示标签栏
+	local validNum = 0
+    for index = #contestInfo , 1 ,-1 do
+        if tostring(contestInfo[index]["contest_id"]) == "8" then
+            table.remove(contestInfo, index)
+		else
+			for k,v in pairs(scheduleInfo) do
+				if tostring(contestInfo[index]["contest_id"]) == tostring(v["contest_id"]) then
+					-- 说明存在相关赛事
+					validNum = validNum + 1
+				end
+			end
+        end
+    end
+
+	-- 渲染公共tab栏
+	local curSelectObj = nil
+	local tabLength = 0
+    local childCount = self.publicObjGrid.transform.childCount
+	for k,v in pairs(contestInfo) do
+		local item = nil
+		tabLength = tabLength + 1
+        if childCount >= tabLength then -- 创建日期栏
+            item = self.publicObjGrid.transform:GetChild(tabLength - 1)
+        else
+            item = UnityEngine.GameObject.Instantiate(self.publicObjItem)
+        end
+		item.transform:SetParent(self.publicObjGrid.transform, false)
+        item.gameObject:SetActive(true)
+        item.transform.localScale = UnityEngine.Vector3.one
+		local year, month, day, hour, min, week = self:SettleDate(v["start_time"])
+        local normalIcon = item.transform:Find("Sprite_normalIcon").gameObject
+		normalIcon.transform:Find("Label_month"):GetComponent("UILabel").text = month.."月"
+		normalIcon.transform:Find("Label_msg"):GetComponent("UILabel").text = v["contest_name"]
+        local selectIcon = item.transform:Find("Sprite_selectIcon").gameObject
+		selectIcon.transform:Find("Label_month"):GetComponent("UILabel").text = month.."月"
+		selectIcon.transform:Find("Label_msg"):GetComponent("UILabel").text = v["contest_name"]
+		selectIcon.gameObject:SetActive(false)
+		if tonumber(k) == 1 then
+			selectIcon.gameObject:SetActive(true)
+			curSelectObj = selectIcon
+			-- 判断不同的页面进行展示
+			if self.curTogglePanel == 0 then
+				self.curSelectMatchId = contestInfo[1]["contest_id"]
+				self:RenderRecord(self.curSelectMatchId)
+			else
+				-- 渲染选手数据页面
+				self.curSelectMatchId = contestInfo[1]["contest_id"]
+				self:RenderPlayer(self.curSelectMatchId)
+			end
+
+		end
+		self.buttonFunctionMap[item.gameObject]=function()
+			Common.PlaySound('9916')    --播放音效
+			if self.curTogglePanel == 0 then
+				local isFailed = self:RenderRecord(v["contest_id"])
+				if not isFailed then
+					self.curSelectMatchId = v["contest_id"]
+					curSelectObj.gameObject:SetActive(false)
+					curSelectObj = selectIcon
+					curSelectObj.gameObject:SetActive(true)
+				end
+			else
+				local isFailed = self:RenderPlayer(v["contest_id"])
+				if not isFailed then
+					self.curSelectMatchId = v["contest_id"]
+					curSelectObj.gameObject:SetActive(false)
+					curSelectObj = selectIcon
+					curSelectObj.gameObject:SetActive(true)
+				end
+			end
+
+		end
+	end
+
+	-- 设置进度线
+	self.progressLine:GetComponent("UISprite").width  = 82+(validNum -1)*176
+	self:DestroyChild(self.publicObjGrid,tabLength)
+	self.publicObjGrid:GetComponent("UIGrid"):Reposition()
+	self:AddEvents()
+end
+
+-- 点击对应月份渲染对应的回放数据
+function mt:RenderRecord(contest_id)
+	local settleMatchTable,sortMatchTab = self:SettleMatchData(contest_id)
+	if not settleMatchTable or not sortMatchTab then
+		MatchCenterSettings.NoticeGameShowTips("暂未开放，敬请期待")
+		return true
+	end
+	local tabLength = 0
+	local upChildCount = self.playbackUpTab.transform.childCount
+	local downChildCount = self.playbackTable.transform.childCount
+	-- 渲染回放记录
+	for k,v in pairs(sortMatchTab) do
+		tabLength = tabLength + 1
+		-- 日期栏
+		local curTableUp = nil
+		if upChildCount >= tabLength then
+			curTableUp = self.playbackUpTab.transform:GetChild(tabLength - 1)
+		else
+			curTableUp = UnityEngine.GameObject.Instantiate(self.playbackTabTem)
+		end
+		curTableUp.transform:SetParent(self.playbackUpTab.transform, false)
+		curTableUp.gameObject:SetActive(true)
+		curTableUp.transform.localScale = UnityEngine.Vector3.one
+		curTableUp.transform:Find("Label_msg"):GetComponent("UILabel").text = settleMatchTable[v][1]["matchDate"].."赛事"
+
+
+		-- 多少个比赛日
+		local curDayItem = nil
+		if downChildCount >= tabLength then
+			curDayItem = self.playbackTable.transform:GetChild(tabLength - 1)
+		else
+			curDayItem = UnityEngine.GameObject.Instantiate(self.playbackDateItem)
+		end
+		curDayItem.transform:SetParent(self.playbackTable.transform, false)
+		curDayItem.gameObject:SetActive(true)
+		curDayItem.transform.localScale = UnityEngine.Vector3.one
+		curDayItem.name = "Container_template" .. tabLength
+
+        -- 渲染每日比赛小场信息
+        local matchDayCount = curDayItem.transform.childCount
+        for k1,v1 in pairs(settleMatchTable[v]) do
+            -- 渲染 当前赛事
+            local lteMatchItem = nil
+            if matchDayCount >= k1 then
+                lteMatchItem = curDayItem.transform:GetChild(k1 - 1)
+            else
+                lteMatchItem = UnityEngine.GameObject.Instantiate(self.playbacklteItem)
+            end
+            lteMatchItem.transform:SetParent(curDayItem.transform, false)
+            lteMatchItem.gameObject:SetActive(true)
+            lteMatchItem.transform.localScale = UnityEngine.Vector3.one
+
+			if v1["clanA_info"] then
+				local leftHead = lteMatchItem.transform:Find("Sprite_leftHeadBg/Sprite_head").gameObject
+				local LeftHeadCallBack=function()
+					leftHead.gameObject:SetActive(true)
+					--leftHead.transform:GetComponent("UITexture"):MakePixelPerfect();
+				end
+				Common.ShowImage(MatchCenterSetting.PanelName,"http:"..v1["clanA_info"]["clan_logo"],leftHead,false,LeftHeadCallBack)
+
+				local rightHead = lteMatchItem.transform:Find("Sprite_rightHeadBg/Sprite_head").gameObject
+				local RightHeadCallBack=function()
+					rightHead.gameObject:SetActive(true)
+					--rightHead.transform:GetComponent("UITexture"):MakePixelPerfect();
+				end
+				Common.ShowImage(MatchCenterSetting.PanelName,"http:"..v1["clanB_info"]["clan_logo"],rightHead,false,RightHeadCallBack)
+
+				lteMatchItem.transform:Find("Sprite_leftHeadBg/Label_name"):GetComponent("UILabel").text = v1["clanA_info"]["clan_name"]
+				lteMatchItem.transform:Find("Sprite_rightHeadBg/Label_name"):GetComponent("UILabel").text = v1["clanB_info"]["clan_name"]
+				lteMatchItem.transform:Find("Label_score"):GetComponent("UILabel").text = v1["score"]
+			end
+			-- 回放功能
+			self.buttonFunctionMap[lteMatchItem.transform:Find("Button_playback").gameObject]=function()
+				Common.PlaySound('9916')    --播放音效
+				local htmlUrl = "https://hyrz.qq.com/ingame/a20210401videoig/index.html?vid=v3240mjhzym&title=%E7%AC%AC%E5%8D%81%E5%85%AB%E5%B1%8A%E6%97%A0%E5%B7%AE%E5%88%AB%E5%86%B3%E8%B5%9B%204%E6%9C%8817%E6%97%A5%E5%85%A8%E5%A4%A9%E6%AF%94%E8%B5%9B"
+				if v1["video_url"] and v1["video_url"] ~= "" then
+					local strTab = MatchCenterTools.Split(v1["video_url"],"_")
+					htmlUrl = "https://hyrz.qq.com/ingame/a20210401videoig/index.html?vid="..strTab[1].."&title="..MatchCenterTools.NewEncodeURI(strTab[2])
+					MatchCenterReport.ClickWatchPlayBack(self.curSelectMatchId,strTab[1],strTab[2])
+				end
+				MatchCenterSettings.JumpSlugSDK(htmlUrl,"1")
+			end
+
+			-- 设置标题锚点
+			if tonumber(k1) == 1 then
+				local titleAnchor = curTableUp.transform:GetComponent("UIWidget")
+				titleAnchor:SetAnchor(lteMatchItem)
+				titleAnchor.leftAnchor:Set(0, 0)
+				titleAnchor.rightAnchor:Set(1, -18)
+				titleAnchor.topAnchor:Set(1, 35)
+				titleAnchor.bottomAnchor:Set(1, 7)
+			end
+		end
+		self:DestroyChild(curDayItem,#settleMatchTable[v])
+		curDayItem:GetComponent("UIGrid"):Reposition()
+	end
+	self:DestroyChild(self.playbackUpTab,tabLength)
+	self:DestroyChild(self.playbackTable,tabLength)
+
+	self.playbackTable:GetComponent("UITable"):Reposition()
+	self.downScrollView:GetComponent("UIScrollView"):ResetPosition()
+	self:AddEvents()
+end
+
+
+-- 选手排行： 处理选手数据
+function mt:SettlePlayerData(data)
+	self.playData = data["dstzcs_2810"]
+	-- 兼容只有一条数据时少了一层table结构问题
+	if tonumber(next(self.playData)) ~= 1 then
+		local playData = self.playData
+		self.playData = {}
+		table.insert(self.playData, playData)
+		return
+	end
+	for k,v in pairs(self.playData) do
+		v["sort"] = string.sub(v["gxsj_1773"],1,6)
+		v["month"] = tostring(tonumber(string.sub(v["gxsj_1773"],5,6))).."月"
+	end
+	table.sort(self.playData, function(a,b)
+		return a["sort"] < b["sort"]
+	end)
+end
+
+
+-- 渲染下方选手数据
+function mt:RenderPlayer(contest_id)
+
+	local playerData = nil
+	for k,v in pairs(self.playData) do
+		if v["ssid_7785"] and v["ssid_7785"] == contest_id then
+			playerData = v["dstsss_5862"]
+		end
+	end
+	if not playerData then
+		MatchCenterSettings.NoticeGameShowTips("暂未开放，敬请期待")
+		return true
+	end
+	local item = nil
+	local childCount = self.playerGrid.transform.childCount
+	local length = 0
+	table.sort(playerData, function(a,b)
+		return a["dstxss_5825"] < b["dstxss_5825"]
+	end)
+	for k,v in pairs(playerData) do
+		length = length + 1
+		if childCount >= k then
+			item = self.playerGrid.transform:GetChild(k - 1)
+		else
+			item = UnityEngine.GameObject.Instantiate(self.playItem)
+		end
+		item.transform:SetParent(self.playerGrid.transform, false)
+		item.gameObject:SetActive(true)
+		item.transform.localScale = UnityEngine.Vector3.one
+		-- "dstxst_4083":"//game.gtimg.cn/images/hyrz/zlkdatasys/images/image/20210513/16208942163202.png", -- 选手头像url
+		-- "dstxsc_8760":"24", --场均控制时间
+		-- "dstxsc_8815":"2", -- 场均控制时间排名
+		-- "dstxsi_1534":"1001", --选手id
+		-- "dstxss_5825":"1", --选手 赛事排名
+		-- "dstxsc_4142":"1",  --场均伤害排名
+		-- "dstxsc_5056":"365", --场均造成伤害
+		-- "dstxsc_5699":"224", --场均连击数
+		-- "dstxsc_9045":"3", --场均连击排名
+		-- "dstxsc_7297":"61.00", --场均技能命中率
+		-- "dstxsm_6662":"拔皇", --选手名称
+		-- "dstxsc_9326":"50.00" --场均技能躲避率
+		item.transform:Find("Label_sort"):GetComponent("UILabel").text = v["dstxss_5825"]
+		item.transform:Find("Label_name"):GetComponent("UILabel").text = v["dstxsm_6662"]
+		item.transform:Find("Label_hurt"):GetComponent("UILabel").text = v["dstxsc_5056"]
+		item.transform:Find("Label_combo"):GetComponent("UILabel").text = v["dstxsc_5699"]
+		item.transform:Find("Label_control"):GetComponent("UILabel").text = v["dstxsc_8760"]
+		item.transform:Find("Label_shooting"):GetComponent("UILabel").text = v["dstxsc_7297"]
+		item.transform:Find("Label_avoid"):GetComponent("UILabel").text = v["dstxsc_9326"]
+		item.transform:Find("Label_avoid"):GetComponent("UILabel").text = v["dstxsc_9326"]
+
+		local playerHead = item.transform:Find("Sprite_headBg/Sprite_head").gameObject
+		local HeadCallBack=function()
+			if playerHead then playerHead.gameObject:SetActive(true) end
+			--rightHead.transform:GetComponent("UITexture"):MakePixelPerfect();
+		end
+		Common.ShowImage(MatchCenterSetting.PanelName,"http:"..v["dstcsx_8318"],playerHead,false,HeadCallBack)
+
+		-- 渲染TOP排名
+		if tostring(v["dstxsc_4142"]) == "1" then
+			local topObj = self.playerLeft.transform:GetChild(0)
+			topObj.transform:Find("Label_num"):GetComponent("UILabel").text = v["dstxsc_5056"]
+			self:RenderTop(topObj,v)
+		end
+		if tostring(v["dstxsc_9045"]) == "1" then
+			local topObj = self.playerLeft.transform:GetChild(1)
+			topObj.transform:Find("Label_num"):GetComponent("UILabel").text = v["dstxsc_5699"]
+			self:RenderTop(topObj,v)
+		end
+		if tostring(v["dstxsc_8815"]) == "1" then
+			local topObj = self.playerLeft.transform:GetChild(2)
+			topObj.transform:Find("Label_num"):GetComponent("UILabel").text = v["dstxsc_8760"]
+			self:RenderTop(topObj,v)
+		end
+	end
+	self:DestroyChild(self.playerGrid,length)
+	self.playerGrid:GetComponent("UIGrid"):Reposition()
+	self.playerScrollView:GetComponent("UIScrollView"):ResetPosition()
+end
+
+-- 渲染TOP
+function mt:RenderTop(topObj,TopData)
+	-- 渲染top排名
+	local topHead = topObj.transform:Find("Sprite_head").gameObject
+	local TopHeadCallBack=function()
+		topHead.gameObject:SetActive(true)
+		--topHead.transform:GetComponent("UITexture"):MakePixelPerfect();
+	end
+	Common.ShowImage(MatchCenterSetting.PanelName,"http:"..TopData["csxsjz_6607"],topHead,false,TopHeadCallBack)
+	topObj.transform:Find("Sprite_nameBg/Label_bg"):GetComponent("UILabel").text = TopData["dstxsm_6662"]
+end
+
+
+-- 销毁多余子物体
+function mt:DestroyChild(childParent,needCount)
+    local childCount = childParent.transform.childCount
+    if tonumber(childCount) <= tonumber(needCount) then
+        return Logger.DEBUG("子物体数量不需要销毁")
+    end
+
+    for index = childCount -1 ,needCount, -1 do
+        local curChildCount = childParent.transform.childCount
+        if tonumber(curChildCount) <= 4 then
+            Logger.DEBUG("schedule隐藏子物体")
+            childParent.transform:GetChild(index).gameObject:SetActive(false)
+        else
+            Logger.DEBUG("schedule 同步销毁子物体")
+            UnityEngine.GameObject.DestroyImmediate(childParent.transform:GetChild(index).gameObject)
+        end
+    end
+end
+
+
+-- 添加按钮绑定事件
+function mt:AddEvents()
+	for button, response in pairs(self.buttonFunctionMap) do
+		if button ~= nil and button.gameObject ~= nil  and Slua.IsNull(button) == false then
+			UIEventListener.Get(button).onClick = response
+		end
+	end
+end
+
+-- 移除按钮绑定事件
+function mt:RemoveEvents()
+	for button, response in pairs(self.buttonFunctionMap) do
+		if button ~= nil and button.gameObject ~= nil  and Slua.IsNull(button) == false then
+			UIEventListener.Get(button).onClick = nil
+		end
+	end
+	self.buttonFunctionMap = {};
+end
+
+-- 处理跳转事件
+function mt:HandleJump(jumpParams)
+	if type(jumpParams) == "string" then Logger.DEBUG("playback_HandleJump"..jumpParams) end
+end
+
+function mt:SetActive(flag)
+	if flag then
+		if not self.isRender then
+			self:ToggleSelect()
+			self:Render()
+			self.isRender = true
+		end
+		MatchCenterReport.ClickPlayBack()
+	end
+    self.gameObject:SetActive(flag)
+end
+
+-- 面板对象销毁
+-- 销毁在initPanel中声明的对象
+-- 统一声明，统一销毁，以防漏销导致内存泄漏
+function mt:Destroy()
+	self:RemoveEvents()
+	for k, _ in pairs(self) do
+		self[k] = nil
+	end
+end
+
+return mt
+
+
+
+
+
+
+
+
+
+
+
+
+-- -- 渲染选手数据上方月份信息
+-- function mt:RenderPlayerData()
+-- 	-- 渲染月份信息
+-- 	local length = 0
+-- 	local item = nil
+-- 	local lastSelectIcon = nil
+-- 	local childCount = self.publicObjGrid.transform.childCount
+-- 	for k,v in pairs(self.playData) do
+-- 		length = length + 1
+-- 		-- 创建日期栏
+-- 		if childCount >= length then
+-- 			item = self.publicObjGrid.transform:GetChild(length - 1)
+-- 		else
+-- 			item = UnityEngine.GameObject.Instantiate(self.publicObjItem)
+-- 		end
+-- 		item.transform:SetParent(self.publicObjGrid.transform, false)
+-- 		item.gameObject:SetActive(true)
+-- 		item.transform.localScale = UnityEngine.Vector3.one
+-- 		local normalIcon = item.transform:Find("Sprite_normalIcon").gameObject
+-- 		normalIcon.transform:Find("Label_month"):GetComponent("UILabel").text = v["month"]
+-- 		normalIcon.transform:Find("Label_msg"):GetComponent("UILabel").text = v["dstssm_3704"]
+-- 		local selectIcon = item.transform:Find("Sprite_selectIcon").gameObject
+-- 		selectIcon.transform:Find("Label_month"):GetComponent("UILabel").text = v["month"]
+-- 		selectIcon.transform:Find("Label_msg"):GetComponent("UILabel").text = v["dstssm_3704"]
+-- 		selectIcon.gameObject:SetActive(false)
+-- 		if tonumber(k) == 1 then
+-- 			self:RenderPlayer(self.playData[1]["dstsss_5862"])
+-- 			selectIcon.gameObject:SetActive(true)
+-- 			lastSelectIcon = selectIcon
+-- 		end
+-- 		self.buttonFunctionMap[item.gameObject]=function()
+-- 			Common.PlaySound('9916')   --播放音效
+-- 			if next(v["dstsss_5862"]) then
+-- 				lastSelectIcon.gameObject:SetActive(false)
+-- 				selectIcon.gameObject:SetActive(true)
+-- 				lastSelectIcon = selectIcon
+-- 				self:RenderPlayer(v["dstsss_5862"])
+-- 			end
+-- 		end
+-- 	end
+-- 	self:AddEvents()
+-- 	self:DestroyChild(self.publicObjGrid,length)
+-- 	self.publicObjGrid:GetComponent("UIGrid"):Reposition()
+-- 	-- self.upScrillView:GetComponent("UIScrollView"):ResetPosition()
+-- end

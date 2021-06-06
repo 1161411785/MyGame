@@ -1,0 +1,250 @@
+local MatchCenterDataManager = require("MatchCenterDataManager")
+local MatchCenterSetting = require("MatchCenterSetting")
+local MatchCenterReport = require("MatchCenterReport")
+local MatchCenterRequestHandler = require("MatchCenterRequestHandler")
+local MatchCenterTools           = require "MatchCenterTools"
+local mt = {}
+
+function mt:New(o)
+    local o = {}
+    setmetatable(o, mt)
+    self.__index = self
+    return o
+end
+
+function mt:Init(gameObject)
+    self.gameObject = gameObject
+    self.transform = self.gameObject.transform
+    self.closeBtn = self.transform:Find("Sprite_menban"):GetComponent("UIButton").gameObject
+    self.signContent = self.transform:Find("Container_content").gameObject
+    -- 签到奖励
+    self.signPanel = self.transform:Find("Container_content/Container_normal").gameObject
+    self.normalBg = self.transform:Find("Container_content/Container_normal/Sprite_bg").gameObject
+    self.leftMsg = self.transform:Find("Container_content/Container_normal/Sprite_bg/Sprite_mask/Label_msg").gameObject
+    self.signScrollView = self.transform:Find("Container_content/Container_normal/Scroll View").gameObject
+    self.signGrid = self.transform:Find("Container_content/Container_normal/Scroll View/Grid").gameObject
+    self.signTemplate = self.transform:Find("Container_content/Container_normal/Scroll View/Grid/Container_task_template").gameObject
+    --self.closeBtn = self.transform:Find("Container_content/Container_time").gameObject
+
+    -- 观赛时间页面
+    self.timePanel = self.transform:Find("Container_content/Container_time").gameObject
+    self.silder = self.transform:Find("Container_content/Container_time/Sprite_silder").gameObject
+    self.timeScrollView = self.transform:Find("Container_content/Container_time/Scroll View").gameObject
+    self.timeGrid = self.transform:Find("Container_content/Container_time/Scroll View/Grid").gameObject
+    self.timeAward = self.transform:Find("Container_content/Container_time/Scroll View/Grid/Container_timeAward").gameObject
+
+    self.buttonFunctionMap = {}
+end
+
+function mt:Render(taskInfo)
+    Common.TablePrinter(taskInfo, "taskAward19++++")
+    self.transform.parent.gameObject:SetActive(true)
+    self.signPanel.gameObject:SetActive(true)
+    self.timePanel.gameObject:SetActive(false)
+    self.buttonFunctionMap[self.closeBtn]=function()
+        Common.PlaySound('9907')    --播放音效
+        self:SetActive(false)
+    end
+    self:AddEvents()
+
+    local childCount = self.signGrid.transform.childCount
+	local length = 0
+    for k,v in pairs(taskInfo["signList"]) do
+        local item = nil
+        length = length + 1
+		if childCount >= length then
+			item = self.signGrid.transform:GetChild(length - 1)
+		else
+			item = UnityEngine.GameObject.Instantiate(self.signTemplate)
+		end
+		item.transform:SetParent(self.signGrid.transform, false)
+		item.gameObject:SetActive(true)
+        item.transform.localScale = UnityEngine.Vector3.one
+        --item.transform:Find("Sprite_select").gameObject:SetActive(false)
+        item.transform:Find("Label_date"):GetComponent("UILabel").text = v["name"]
+		item.transform:Find("Label_taskName"):GetComponent("UILabel").text = v["desc"]
+        local btnlq = item.transform:Find("Btn_lq").gameObject
+        local imgylq = item.transform:Find("Sprite_ylq").gameObject
+        if tostring(v["online"]) == "1" and v["status"] == "1" then
+            -- 可领取
+            btnlq:SetActive(true)
+            imgylq:SetActive(false)
+            self.buttonFunctionMap[btnlq]=function()
+                Common.PlaySound('9907')    --播放音效
+                MatchCenterSettings.NoticeGameShowTips("网络异常，请稍后重试")
+                -- 领取上报
+                MatchCenterReport.ClickGetReword("taskId", 0)
+            end
+            self.leftMsg:GetComponent("UILabel").text = v["desc"]
+        elseif v["status"] == "0" then
+            -- 已领取
+            btnlq:SetActive(false)
+            imgylq:SetActive(true)
+        else
+            -- 不可领取
+            btnlq:SetActive(false)
+            imgylq:SetActive(false)
+        end
+        local rewordItemPath = Common.GetGameObjectPath(item.transform:Find("Sprite_reword").gameObject)
+        MatchCenterSettings.NoticeGameShowItemIcon(v["rewords"]["Item"][1]["id"], v["rewords"]["Item"][1]["num"], rewordItemPath)
+    end
+    self:DestroyChild(self.signGrid,length)
+    self.signGrid:GetComponent("UIGrid"):Reposition()
+	self.signScrollView:GetComponent("UIScrollView"):ResetPosition()
+
+    if taskInfo["taskList"] and next(taskInfo["taskList"]) then
+        -- 隐藏签到页面不需要的元素
+        self.normalBg.transform:Find("Sprite_mask").gameObject:SetActive(false)
+        -- 修改scroll view 显示范围
+        self.signScrollView.transform:GetComponent("UIPanel").clipRange = UnityEngine.Vector4(76,85,464,314)
+        self:RenderDurationPanel(taskInfo["taskList"])
+    end
+end
+
+function mt:RenderDurationPanel(taskList)
+    self.timePanel.gameObject:SetActive(true)
+    table.sort(taskList, function(a,b)
+        return tonumber(a["id"]) < tonumber(b["id"])
+    end)
+
+    local childCount = self.timeGrid.transform.childCount
+	local length = 0
+    for k,v in pairs(taskList) do
+        local item = nil
+        length = length + 1
+		if childCount >= length then
+			item = self.timeGrid.transform:GetChild(length - 1)
+		else
+			item = UnityEngine.GameObject.Instantiate(self.timeAward)
+		end
+		item.transform:SetParent(self.timeGrid.transform, false)
+		item.gameObject:SetActive(true)
+        item.transform.localScale = UnityEngine.Vector3.one
+        local msg = MatchCenterTools.Split(v["name"], " ")
+        item.transform:Find("Sprite_downBg/Label_msg"):GetComponent("UILabel").text = msg[2]
+        -- 通知游戏展示游戏道具icon
+        local rewordItemPath = Common.GetGameObjectPath(item.transform:Find("Sprite_reward").gameObject)
+        MatchCenterSettings.NoticeGameShowItemIcon(v["rewords"]["Item"][1]["id"], v["rewords"]["Item"][1]["num"], rewordItemPath)
+        local btnkl = item.transform:Find("Btn_kl").gameObject
+        local imgylq = item.transform:Find("Sprite_yl").gameObject
+        -- 判断奖励状态
+        -- @status 0 已领奖   1：已完成未领奖 2：未完成
+        if v["status"] == "0" then
+            btnkl.gameObject:SetActive(false)
+            imgylq.gameObject:SetActive(true)
+        elseif v["status"] == "1" then
+            btnkl.gameObject:SetActive(true)
+            imgylq.gameObject:SetActive(false)
+            self.buttonFunctionMap[btnkl]=function()
+                Common.PlaySound('9907')    --播放音效
+                local successHandler = function()
+                    -- 领奖成功
+                    MatchCenterSettings.NoticeGameShowTips("领取成功，奖励已发到邮箱~")
+                    -- 修改按钮状态
+                    btnkl.gameObject:SetActive(false)
+                    imgylq.gameObject:SetActive(true)
+                end
+                local failedHandler = function()
+                    -- 领奖失败
+                    MatchCenterSettings.NoticeGameShowTips("领取失败，请稍后再试~")
+                end
+                MatchCenterRequestHandler.GetNewTaskRewords(v["id"], successHandler, failedHandler)
+            end
+        else --未完成
+            btnkl.gameObject:SetActive(false)
+            imgylq.gameObject:SetActive(false)
+        end
+
+    end
+    --渲染进度条
+    self:RenderSilder(taskList)
+end
+
+-- 渲染进度条
+function mt:RenderSilder(taskList)
+
+    -- 105  + 180(图片70 进度110) + 180 +180
+    local curProgress = tonumber(taskList[4]["taskData"]["progress"])
+    local target1 = tonumber(taskList[1]["taskData"]["target"])
+    local target2 = tonumber(taskList[2]["taskData"]["target"])
+    local target3 = tonumber(taskList[3]["taskData"]["target"])
+    local target4 = tonumber(taskList[4]["taskData"]["target"])
+    if curProgress <= target1 then
+        self.silder:GetComponent("UIWidget").width = 105/target1 * curProgress
+    elseif target1 < curProgress and curProgress <= target2 then
+        self.silder:GetComponent("UIWidget").width = 175 + 110/(target2 - target1)*(curProgress - target1)
+    elseif target2 < curProgress and curProgress <= target3 then
+        self.silder:GetComponent("UIWidget").width = 355 + 110/(target3 - target2)*(curProgress - target2)
+    elseif target3 < curProgress and curProgress <= target4 then
+        self.silder:GetComponent("UIWidget").width = 535 + 110/(target4 - target3)*(curProgress - target3)
+    else
+        self.silder:GetComponent("UIWidget").width = 655
+    end
+
+end
+
+
+-- 销毁多余子物体
+function mt:DestroyChild(childParent,needCount)
+    local childCount = childParent.transform.childCount
+    if tonumber(childCount) <= tonumber(needCount) then
+        return Logger.DEBUG("子物体数量不需要销毁")
+    end
+
+    for index = childCount -1 ,needCount, -1 do
+        local curChildCount = childParent.transform.childCount
+        if tonumber(curChildCount) <= 4 then
+            Logger.DEBUG("schedule隐藏子物体")
+            childParent.transform:GetChild(index).gameObject:SetActive(false)
+        else
+            Logger.DEBUG("schedule 同步销毁子物体")
+            UnityEngine.GameObject.DestroyImmediate(childParent.transform:GetChild(index).gameObject)
+        end
+    end
+end
+
+
+function mt:SetActive(flag)
+    if flag then
+        -- 显示 任务数据
+        local taskInfo = MatchCenterDataManager.GetTaskInfo()
+        if taskInfo == nil then 
+            MatchCenterSetting.NoticeGameShowTips("任务数据拉取异常，请稍后重试~")
+            MatchCenterRequestHandler.GetTaskAwardList(function()
+                taskInfo = MatchCenterDataManager.GetTaskInfo()
+                self:Render(taskInfo)
+            end)
+            return
+        end
+        self:Render(taskInfo)
+        MatchCenterReport.ClickTaskTab()
+    end
+    self.gameObject:SetActive(flag)
+end
+
+
+function mt:AddEvents()
+    for button, response in pairs(self.buttonFunctionMap) do
+		if button ~= nil and button.gameObject ~= nil  and Slua.IsNull(button) == false then
+			UIEventListener.Get(button).onClick = response
+		end
+    end
+end
+
+function mt:RemoveEvents()
+    for button, response in pairs(self.buttonFunctionMap) do
+		if button ~= nil and button.gameObject ~= nil  and Slua.IsNull(button) == false then
+			UIEventListener.Get(button).onClick = nil;
+		end
+	end
+	self.buttonFunctionMap = {};
+end
+
+function mt:Destroy()
+    self:RemoveEvents()
+    for k, _ in pairs(self) do
+		self[k] = nil
+    end 
+end
+
+return mt

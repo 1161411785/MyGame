@@ -1,0 +1,191 @@
+-- 活动中心面板
+require "Common"
+require "JsonManager"
+require "EventDispatcher"
+
+
+local MatchCenterRequestHandler = require("MatchCenterRequestHandler")
+local MatchCenterDataManager = require("MatchCenterDataManager")
+
+local MatchCenterEvent = require("MatchCenterEvent")
+
+local MatchCenterActivity = require("MatchCenterActivity")
+
+local MatchCenterSetting = require("MatchCenterSetting")
+
+local MatchCenterTools = require("MatchCenterTools")
+
+local MatchCenterReport = require("MatchCenterReport")
+
+local Logger = Common.GetLogger()
+
+local UserData = Common.GetUserData()
+
+local mt = {}
+
+
+function mt:New(o)
+	o = o or {}
+	setmetatable(o, self)
+	self.__index = self
+	return o
+end
+
+function mt:Init(gameObject, jumpParams)
+
+	self.gameObject = gameObject.transform:Find("Container_activity").gameObject;
+	self.transform  = self.gameObject.transform;
+
+	self.scrollView = self.transform:Find("Container_tab/Scroll View").gameObject
+
+	self.gridObj = self.transform:Find("Container_tab/Scroll View/Grid").gameObject
+
+	self.tabTemplate = self.transform:Find("Container_templates/Container_tab_template").gameObject
+	self.isRender = false
+	
+	self.noticeTable = {}
+	self.jumpActId = nil
+	if jumpParams ~= nil and jumpParams[1] == 'activity' and jumpParams[2] ~= nil then
+		self.jumpActId = jumpParams[2]
+	end
+	self.buttonFunctionMap = {}
+	self.firstNoticeId = 0
+	self.isFirstShow = true
+end
+
+function mt:AddEvents()
+    for button, response in pairs(self.buttonFunctionMap) do
+		if button ~= nil and button.gameObject ~= nil  and Slua.IsNull(button) == false then
+			UIEventListener.Get(button).onClick = response
+		end
+    end
+end
+
+
+
+function mt:RemoveEvents()
+    for button, response in pairs(self.buttonFunctionMap) do
+		if button ~= nil and button.gameObject ~= nil  and Slua.IsNull(button) == false then
+			UIEventListener.Get(button).onClick = nil
+		end
+	end
+	self.buttonFunctionMap = {};
+end
+
+
+
+function mt:OnToggleClick(id, tab)
+	for k, v in pairs(self.noticeTable) do
+		if v.newItem.name ~= 'Container_act_' .. id then
+			v:SetActive(false)
+		else
+			v:SetActive(true)
+		end
+	end
+	local ret = MatchCenterDataManager.SetNoticeRedPoint(id, MatchCenterSetting.NoticeRedPointStatusRead)
+	if ret then
+		local noticeRedCount = MatchCenterDataManager.GetActivityRedPoint()
+		if noticeRedCount > 0 then
+			MatchCenterDataManager.SetActivityRedPoint(noticeRedCount - 1)
+		end
+	end
+	if EventDispatcher.HasEventListener(MatchCenterEvent.UpdateNavigationRedPoint)  then
+		EventDispatcher.DispatchEvent(MatchCenterEvent.UpdateNavigationRedPoint)
+	end
+	tab.transform:Find("Toggle/Sprite_redPoint").gameObject:SetActive(false)
+	
+	MatchCenterReport.ClickNoticeTab(id)
+end
+
+
+
+function mt:Render()
+	local noticeData = MatchCenterDataManager.GetNoticeInfo()
+	if noticeData == nil or #noticeData == 0 then
+		-- todo 无公告活动处理
+	else
+		for k,v in pairs(noticeData) do
+			if k == 1 then
+				self.firstNoticeId = v['info_id']
+			end
+			-- tab 头部
+			local newTab = UnityEngine.GameObject.Instantiate(self.tabTemplate)
+			newTab.transform:SetParent(self.gridObj.transform, false)
+			newTab.name = "Container_tab_" .. tostring(v['info_id'])
+
+			newTab.transform.localPosition = UnityEngine.Vector3(640 - 160*k, 0, 0)
+
+			newTab.transform:Find("Toggle/Background/Label").gameObject:GetComponent("UILabel").text = v['tab_titlle']
+			newTab.transform:Find("Toggle/Checkmark/Label").gameObject:GetComponent("UILabel").text = v['tab_titlle']
+			-- local isRed = self:GetRedPoint(v)
+			local isRed =  MatchCenterDataManager.GetNoticeRedPoint(v)
+			newTab.transform:Find("Toggle/Sprite_redPoint").gameObject:SetActive(isRed == tostring(MatchCenterSetting.NoticeRedPointStatusUnread))				
+			newTab:SetActive(true)
+
+			self.buttonFunctionMap[newTab.transform:Find("Toggle").gameObject:GetComponent("UIButton").gameObject] = function()
+				self:OnToggleClick(v['info_id'], newTab)
+			end
+			local newAct =  MatchCenterActivity:New()
+			newAct:Init(self.gameObject, v)
+			newAct:SetActive(false)
+			table.insert(self.noticeTable, newAct)
+		end
+		self.gridObj:GetComponent("UIGrid"):Reposition()
+		self.scrollView:GetComponent("UIScrollView"):ResetPosition()
+
+	end
+	self:AddEvents()
+end
+
+
+function mt:SelectTabById(id)
+	local item = self.gridObj.transform:Find("Container_tab_" .. tostring(id)).gameObject
+	if item == nil then
+		return
+	end
+	item.transform:Find("Toggle").gameObject:GetComponent("UIToggle").value = true
+	self:OnToggleClick(id, item)
+end
+
+function mt:SetActive(flag)
+	if not self.isRender then
+		self:Render()
+		self.isRender = true
+	end
+	if flag and self.isFirstShow then
+		if self.jumpActId ~= nil then
+		    self:SelectTabById(self.jumpActId)
+		else
+			self:SelectTabById(self.firstNoticeId)
+		end
+		self.isFirstShow = false
+	end
+    self.gameObject:SetActive(flag)
+end
+
+
+-- 处理跳转事件
+function mt:HandleJump(jumpParams)
+	
+end
+
+
+
+-- 面板对象销毁
+-- 销毁在initPanel中声明的对象
+-- 统一声明，统一销毁，以防漏销导致内存泄漏
+
+function mt:Destroy()	
+	self:RemoveEvents()
+	if type(self.noticeTable) == "table" and #self.noticeTable > 0 then
+		for i = 1, #self.noticeTable do
+			UnityEngine.GameObject.Destroy(self.noticeTable[i].gameObject)
+		end
+	end
+	self.noticeTable = {}
+	for k, _ in pairs(self) do
+		self[k] = nil
+	end 
+end
+
+return mt

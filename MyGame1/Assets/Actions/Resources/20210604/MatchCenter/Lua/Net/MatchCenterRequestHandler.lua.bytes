@@ -1,0 +1,523 @@
+require "Common"
+require "JsonManager"
+local MatchCenterSettings =  require "MatchCenterSetting"
+local MatchCenterResponseHandler = require "MatchCenterResponseHandler"
+local MatchCenterDataManager = require "MatchCenterDataManager"
+local MatchCenterRequestHandler = {}
+local Logger = Common.GetLogger()
+
+local cmdType = {
+    Activity = "10000",  --拉取活动
+    Live = "30000",      --直播
+    Room = "24000",      -- 新协议
+    Paas = "10006"
+}
+
+
+-- 获取ZoneId 火影专用
+local GetZoneId = function()
+    local userData = Common.GetUserData()
+    local zoneIds = {
+        ["1_0"] = 1,
+        ["1_1"] = 2,
+        ["2_0"] = 3,
+        ["2_1"] = 4
+    }
+    local key = userData.sArea .. "_" .. userData.sPlatID
+    Logger.DEBUG("zone key:" .. key)
+    if zoneIds[key] ~= nil then
+        local id =  tonumber(zoneIds[key]) * 100000 + tonumber(userData.sPartition)
+        return tostring(id)
+    else
+        -- 测试环境
+        return tostring(userData.sPartition)
+    end
+end
+
+
+
+-- 潘多拉后台请求header
+local GetCommonHeader = function(cmd)
+    local userData = Common.GetUserData()
+    local headListReq          = {};
+    headListReq["msg_type"]    = "1";
+    headListReq["patition_id"] = userData.sPartition;
+    headListReq["role_id"]     = userData.sRoleId;
+    headListReq["cmd_id"]      = cmd;
+    headListReq["area_id"]     = userData.sArea;
+    headListReq["channel_id"]  = tostring(MatchCenterSettings.ChannelId);
+    headListReq["info_id"]     = tostring(MatchCenterSettings.GetInfoId());
+    headListReq["access_token"] = userData.sAccessToken
+    headListReq["open_id"]     = userData.sOpenId;
+    headListReq["game_app_id"] = userData.sAppId;
+    headListReq["seq_id"]      = "1"; --待确认
+    headListReq["sdk_version"] = Common.GetSDKVersion();
+    headListReq["act_style"]   = tostring(MatchCenterSettings.ActStyle);
+    headListReq["plat_id"]     = userData.sPlatID;
+    headListReq["timestamp"]   = Common.GetNowMilliseconds(); -- os.time();
+    headListReq["acc_type"]    = userData.sAcountType;
+    headListReq["game_env"]    = 1; --待确认
+
+    return headListReq;
+end
+
+
+local GetRequestTable = function(cmd, body)
+    local request = {
+        ["head"] = GetCommonHeader(cmd),
+        ["body"] = body
+    }
+    return request
+end
+
+-- paas body
+function AssemblePaasBody(requestExtendParams)
+    local strExtendParams = "";
+    for key, val in pairs(requestExtendParams) do
+        strExtendParams = strExtendParams.."&"..key.."="..val;
+    end
+    local userData = Common.GetUserData()
+    local paasId = MatchCenterSettings.PaasId
+	local ams_req_json = {}
+	ams_req_json["url_para"]    = "ameVersion=0.3&sServiceType=hyrz&instanceid="..paasId.."&sServiceDepartment=pandora";
+    ams_req_json["cookie_para"] = "appid="..userData.sAppId..";openid="..userData.sOpenId..";access_token="..userData.sAccessToken..
+                                    ";acctype="..userData.sAcountType..";uin="..userData.sOpenId..
+                                    ";skey=;p_uin=;p_skey=;pt4_token=;IED_LOG_INFO2=IED_LOG_INFO2"
+    ams_req_json["body_para"]   = "instanceid="..paasId.."&g_tk=1842395457&sArea="..userData.sArea..
+                                    "&sPlatId="..userData.sPlatID.."&sPartition="..userData.sPartition..
+                                    "&sRoleId="..userData.sRoleId.."&sServiceDepartment=pandora&pay_lottery_serial=&appid="..userData.sAppId..
+                                    "&sServiceType=hyrz&iUin="..userData.sOpenId..strExtendParams
+
+	local body = {};
+	body["md5_val"]      = tostring(os.time())
+    body["ams_req_json"] = ams_req_json
+
+    return body
+end
+
+
+-- 获取活动基本信息
+-- 包含了母赛事信息
+function MatchCenterRequestHandler.RequestActivityInfo()
+    local userData = Common.GetUserData()
+    local body = {}
+
+    body['interface'] = "getcontests"
+    local comp_req_json = {}
+    comp_req_json['request_time'] = os.time()
+    comp_req_json['game'] = userData.sGameName
+    -- comp_req_json['game'] = 'cfm'
+    comp_req_json['zoneid'] = GetZoneId()
+
+    body['comp_req_json'] = comp_req_json
+    local request = GetRequestTable(cmdType.Activity, body)
+    Logger.DEBUG("request activity info:" .. JsonManager.EncodeJson(request))
+    Common.CallBroker(9000 , JsonManager.EncodeJson(request), MatchCenterResponseHandler.OnReceiveActivityInfo)
+end
+
+-- 刷新活动信息
+-- 包含了母赛事信息
+function MatchCenterRequestHandler.RefreshActivityInfo()
+    local userData = Common.GetUserData()
+    local body = {}
+
+    body['interface'] = "getcontests"
+    local comp_req_json = {}
+    comp_req_json['request_time'] = os.time()
+    comp_req_json['game'] = userData.sGameName
+    comp_req_json['zoneid'] = GetZoneId()
+
+    body['comp_req_json'] = comp_req_json
+    local request = GetRequestTable(cmdType.Activity, body)
+    Logger.DEBUG("request activity info:" .. JsonManager.EncodeJson(request))
+    Common.CallBroker(9000 , JsonManager.EncodeJson(request), MatchCenterResponseHandler.OnRefreshActivityInfo)
+end
+
+-- 请求直播间信息
+function MatchCenterRequestHandler.RequestRoomInfo(anchorId, livePlatId)
+    local userData = Common.GetUserData()
+    local bodyListReq = {}
+    local pandora_req_json = {};
+    pandora_req_json["pandora_appid"]     = "video_relay"
+    pandora_req_json["cmd"]     = 'video_relay/getAnchorInfo'
+    pandora_req_json["game"] = userData.sGameName
+
+    local anchors = {}
+    anchors['anchorId'] = tonumber(anchorId);
+    anchors['livePlatId'] = livePlatId;
+    pandora_req_json["anchors"] = {anchors};
+    bodyListReq["pandora_app_req"] = pandora_req_json;
+    local request = GetRequestTable(cmdType.Live, bodyListReq)
+    Logger.DEBUG("request room info json:" .. JsonManager.EncodeJson(request))
+    Common.CallBroker(9000 , JsonManager.EncodeJson(request), MatchCenterResponseHandler.OnReceiveRoomInfo)
+end
+
+
+
+-- 发送弹幕
+function MatchCenterRequestHandler.SendBullet(anchorId, livePlatId, roomId, txt, nickName, bindId,isWelcome)
+    local userData = Common.GetUserData()
+    local body = {}
+    body['comp_type'] = "9"
+    local comp_req_json = {}
+    comp_req_json['game'] = userData.sGameName
+    comp_req_json['zoneid'] = GetZoneId()
+
+    comp_req_json['liveplat']        = livePlatId;
+    comp_req_json['type']            = "0";                       -- 0:普通发言 1系统弹幕 2主播弹幕
+    comp_req_json['content']         = tostring(txt);           -- 弹幕详情
+    comp_req_json['anchorid']        = tostring(anchorId);      -- 主播id
+    comp_req_json['pid']             = tostring(roomId);        --房间id
+    comp_req_json['gameId']          = userData.sGameName;       --业务代码
+    comp_req_json['msgid']           = tostring(tonumber(userData.sRoleId) + os.time()); --发言人id+时间戳生成
+    comp_req_json['nickname']        = tostring(nickName); 
+    comp_req_json['timestamp']       = tostring(os.time());
+    comp_req_json['userid']          = tostring(userData.sRoleId);    -- 发言人ID，可以为用户ID
+    comp_req_json['useridentity']    = '';                       -- 默认值就行
+    comp_req_json['ip']              = '';                       -- 发言人ip
+    comp_req_json['match_id']        = MatchCenterDataManager.GetCurMatchId()
+    --------------------amz add---包厢相关--------
+    comp_req_json['secretid']        = 'hyrz';      --更新sdk后增加字段
+    local welcomeWord=""
+    if isWelcome then
+        welcomeWord=MatchCenterSettings.WelcomeEnterFansBox
+    end
+    if bindId~=nil then
+        local extendTbl={
+            ext={
+                ["fansBoxId"]=tostring(bindId),
+                ["welcomeWord"]=welcomeWord,
+            }
+        }
+        comp_req_json['extend']          =extendTbl
+    
+        local reportTbl={
+            ["sceneid"]= 50,
+            ["has_userinfo"]= 0,
+            ["log"]= tostring(bindId).."||||||||||"
+        }
+        comp_req_json['dm_report']      =reportTbl
+    end
+    ----------------------------------------
+
+    body['comp_req_json'] = comp_req_json
+    local request = GetRequestTable(cmdType.Room, body)
+    Logger.DEBUG("send bullet json:" .. JsonManager.EncodeJson(request))
+    Common.CallBroker(9000 , JsonManager.EncodeJson(request), MatchCenterResponseHandler.OnReceiveSendBullet)
+    
+    Common.Report(tostring(txt), MatchCenterSettings.TNMIDSendBullet, 0)
+end
+
+
+
+-- 进入直播间
+function MatchCenterRequestHandler.EnterRoom(videoState, anchorId, livePlatId)
+    local userData = Common.GetUserData()
+    local body = {}
+
+    body['comp_type'] = "8"
+    local comp_req_json = {}
+    comp_req_json['game'] = userData.sGameName
+    comp_req_json['play_stat'] = tostring(videoState)
+    comp_req_json['zoneid'] = GetZoneId()
+    comp_req_json['match_id'] = MatchCenterDataManager.GetCurMatchId();
+
+    local anchors = {}
+    anchors['anchorId'] = tostring(anchorId);
+    anchors['livePlatId'] = livePlatId;
+    comp_req_json['anchors'] = {anchors}
+    body['comp_req_json'] = comp_req_json
+    local request = GetRequestTable(cmdType.Room, body)
+    Logger.DEBUG("request enter room json:" .. JsonManager.EncodeJson(request))
+    Common.CallBroker(9000 , JsonManager.EncodeJson(request), MatchCenterResponseHandler.OnReceiveRoomInfo)
+end
+
+
+-- 刷新房间数据
+function MatchCenterRequestHandler.RefreshRoomInfo(videoState, anchorId, livePlatId)
+    local userData = Common.GetUserData()
+    local body = {}
+
+    body['comp_type'] = "8"
+    local comp_req_json = {}
+    comp_req_json['game'] = userData.sGameName
+    comp_req_json['play_stat'] = tostring(videoState)
+    comp_req_json['zoneid'] = GetZoneId()
+    comp_req_json['match_id'] = MatchCenterDataManager.GetCurMatchId()
+    
+    local anchors = {}
+    anchors['anchorId'] = tostring(anchorId);
+    anchors['livePlatId'] = livePlatId;
+    comp_req_json['anchors'] = {anchors}
+    body['comp_req_json'] = comp_req_json
+    local request = GetRequestTable(cmdType.Room, body)
+    Logger.DEBUG("request enter room json:" .. JsonManager.EncodeJson(request))
+    Common.CallBroker(9000 , JsonManager.EncodeJson(request), MatchCenterResponseHandler.OnRefreshRoomInfo)
+end
+
+
+-- 观赛心跳，用于后端上报统计观赛时长
+function MatchCenterRequestHandler.ReportWatchVideoHeartBeat(videoState)
+    local anchorId, livePlatId = MatchCenterDataManager.GetAnchorIdAndLivePlatId()
+    local userData = Common.GetUserData()
+    local body = {}
+    body['comp_type'] = "2"
+    local comp_req_json = {}
+    comp_req_json['game'] = userData.sGameName
+    comp_req_json['anchorid'] = tostring(anchorId)
+    comp_req_json['liveplat'] = livePlatId
+    comp_req_json['get_barrage'] = "0"
+    comp_req_json['timestamp'] = tostring(os.time())
+    comp_req_json['get_audience_num'] = "1"
+    comp_req_json['play_stat'] = tostring(videoState)
+    comp_req_json['zoneid'] = GetZoneId()
+    comp_req_json['interval'] = tostring(MatchCenterSettings.HeartBeatInterval)
+    comp_req_json['match_id'] = MatchCenterDataManager.GetCurMatchId();
+    body['comp_req_json'] = comp_req_json
+    local request = GetRequestTable(cmdType.Room, body)
+    Common.CallBroker(9000 , JsonManager.EncodeJson(request), MatchCenterResponseHandler.OnReceiveHeartBeat)
+end
+
+
+-- 退出直播间
+function MatchCenterRequestHandler.QuiteRoom()
+    local userData = Common.GetUserData()
+    local body = {}
+	local anchorId, livePlatId = MatchCenterDataManager.GetAnchorIdAndLivePlatId()
+    body['comp_type'] = "3"
+    local comp_req_json = {}
+    comp_req_json['anchorid'] = tostring(anchorId)
+    comp_req_json['liveplat'] = livePlatId
+    comp_req_json['zoneid'] = GetZoneId()
+    comp_req_json['match_id'] = MatchCenterDataManager.GetCurMatchId();
+
+    body['comp_req_json'] = comp_req_json
+    local request = GetRequestTable(cmdType.Room, body)
+    Logger.DEBUG("request quite room json:" .. JsonManager.EncodeJson(request))
+    Common.CallBroker(9000 , JsonManager.EncodeJson(request),  MatchCenterResponseHandler.OnReceiveQuitRoom)
+end
+
+
+-- 赛事及回放数据
+-- 获取赛事对阵信息
+function MatchCenterRequestHandler.GetContestList(contestIds, callback)
+    local userData = Common.GetUserData()
+    local body = {}
+    body['interface'] = "getcontestinfo"
+    local comp_req_json = {}
+    comp_req_json['contest_id'] = contestIds
+    --comp_req_json['contest_id'] = {"8"}
+    comp_req_json['get_subscribe'] = "1"
+    comp_req_json['game'] = userData.sGameName
+    comp_req_json['zoneid'] = GetZoneId()
+
+    body['comp_req_json'] = comp_req_json
+    local request = GetRequestTable(cmdType.Activity, body)
+    Logger.DEBUG("request contest info json:" .. JsonManager.EncodeJson(request))
+    Common.CallBroker(9000 , JsonManager.EncodeJson(request), callback)
+end
+
+
+-- 订阅比赛
+function MatchCenterRequestHandler.SubscribeMatch(contestId, subId, successHandler, failedHandler)
+    local anchorId, livePlatId = MatchCenterDataManager.GetAnchorIdAndLivePlatId()
+    local userData = Common.GetUserData()
+    local body = {}
+
+    body['comp_type'] = "7"
+    local comp_req_json = {}
+    comp_req_json['game']       = userData.sGameName
+    comp_req_json['zoneid']     = GetZoneId()
+    comp_req_json['anchorid']   = tostring(anchorId)
+    comp_req_json['liveplat']   = livePlatId
+    comp_req_json['contestid']  = tostring(contestId)
+    comp_req_json['subid']      = tostring(subId)
+    comp_req_json['match_id'] = MatchCenterDataManager.GetCurMatchId();
+
+    body['comp_req_json'] = comp_req_json
+    local request = GetRequestTable(cmdType.Room, body)
+    Logger.DEBUG("request subscribe match:" .. JsonManager.EncodeJson(request))
+    Common.CallBroker(9000 , JsonManager.EncodeJson(request), MatchCenterResponseHandler.OnReceiveSubscribeMatch, successHandler , failedHandler)
+end
+
+
+--取消订阅比赛
+function MatchCenterRequestHandler.CancleSubscribeMatch(contestId, subId, successHandler, failedHandler)
+    local userData = Common.GetUserData()
+    local bodyListReq = {}
+    local pandora_req_json = {};
+    pandora_req_json["pandora_appid"]     = "competition"
+    pandora_req_json["cmd"]     = 'competition/client/unsubscribe'
+    pandora_req_json["game"] = userData.sGameName
+    pandora_req_json["contestid"] = contestId
+    pandora_req_json["subid"] = subId
+    pandora_req_json["match_id"] = "0"
+    bodyListReq["pandora_app_req"] = pandora_req_json;
+    local request = GetRequestTable(cmdType.Live, bodyListReq)
+    Logger.DEBUG("request cancle subscribe json:" .. JsonManager.EncodeJson(request))
+    Common.CallBroker(9000 , JsonManager.EncodeJson(request), MatchCenterResponseHandler.OnReceiveCancleSubscribeMatch , successHandler , failedHandler)
+end
+
+-- 赛事数据接口，选手排行接口
+function MatchCenterRequestHandler.GetPlayerData()
+    local reqParams = {}
+    reqParams['c'] = 'task'
+    reqParams['a'] = 'getJfList'
+    local body = AssemblePaasBody(reqParams);
+    local request = GetRequestTable(cmdType.Paas, body)
+    Logger.DEBUG("request getJfList:" .. JsonManager.EncodeJson(request))
+    Common.CallBroker(9000 , JsonManager.EncodeJson(request), MatchCenterResponseHandler.OnReceiveGetMatchData)
+end
+
+
+
+-- -- 观赛领奖
+-- -- 任务中， 获取任务列表
+-- function MatchCenterRequestHandler.GetTaskList()
+--     local reqParams = {}
+--     reqParams['c'] = 'task'
+--     reqParams['a'] = 'Init'
+--     local body = AssemblePaasBody(reqParams);
+--     local request = GetRequestTable(cmdType.Paas, body)
+--     Logger.DEBUG("request task list:" .. JsonManager.EncodeJson(request))
+--     Common.CallBroker(9000 , JsonManager.EncodeJson(request), MatchCenterResponseHandler.OnReceiveTaskList)
+--     -- Common.CallBroker(9000 , JsonManager.EncodeJson(request), MatchCenterResponseHandler.OnReceiveTaskList, successHandler , failedHandler)
+-- end
+
+-- -- 任务领奖
+-- function MatchCenterRequestHandler.GetTaskReword(id, successHandler, failedHandler)
+--     local reqParams = {}
+--     reqParams['c'] = 'task'
+--     reqParams['a'] = 'GetReword'
+--     reqParams['taskId'] = id
+--     local body = AssemblePaasBody(reqParams);
+--     local request = GetRequestTable(cmdType.Paas, body)
+--     Logger.DEBUG("request task list:" .. JsonManager.EncodeJson(request))
+--     Common.CallBroker(9000 , JsonManager.EncodeJson(request), MatchCenterResponseHandler.OnReceiveGetTaskReword, successHandler , failedHandler)
+-- end
+
+-- 新版观赛任务
+function MatchCenterRequestHandler.GetTaskAwardList(successHandler)
+    local reqParams = {}
+    reqParams['c'] = 'task'
+    reqParams['a'] = 'NewInit'
+    local body = AssemblePaasBody(reqParams);
+    local request = GetRequestTable(cmdType.Paas, body)
+    Logger.DEBUG("request taskAward list:" .. JsonManager.EncodeJson(request))
+    --Common.CallBroker(9000 , JsonManager.EncodeJson(request), MatchCenterResponseHandler.OnReceiveTaskAwardList)
+    Common.CallBroker(9000 , JsonManager.EncodeJson(request), MatchCenterResponseHandler.OnReceiveTaskAwardList, successHandler)
+end
+
+-- 新版任务领奖
+function MatchCenterRequestHandler.GetNewTaskReword(id, successHandler, failedHandler)
+    local reqParams = {}
+    reqParams['c'] = 'task'
+    reqParams['a'] = 'NewGetReword'
+    reqParams['taskId'] = id
+    local body = AssemblePaasBody(reqParams);
+    local request = GetRequestTable(cmdType.Paas, body)
+    Logger.DEBUG("request task list:" .. JsonManager.EncodeJson(request))
+    Common.CallBroker(9000 , JsonManager.EncodeJson(request), MatchCenterResponseHandler.OnReceiveGetTaskReword, successHandler , failedHandler)
+end
+
+
+
+
+
+-- 拉取公告活动列表
+function MatchCenterRequestHandler.GetNoticeActivity()
+    local userData = Common.GetUserData()
+    local headListReq          = {};
+    headListReq["msg_type"]    = "1";
+    headListReq["patition_id"] = userData.sPartition;
+    headListReq["role_id"]     = userData.sRoleId;
+    headListReq["cmd_id"]      = cmdType.Activity;
+    headListReq["area_id"]     = userData.sArea;
+    headListReq["channel_id"]  = tostring(MatchCenterSettings.NoticeChannelId);
+    headListReq["access_token"] = userData.sAccessToken
+    headListReq["open_id"]     = userData.sOpenId;
+    headListReq["game_app_id"] = userData.sAppId;
+    headListReq["seq_id"]      = "1"; --待确认
+    headListReq["sdk_version"] = Common.GetSDKVersion();
+    headListReq["act_style"]   = tostring(MatchCenterSettings.NoticeActStyle);
+    headListReq["plat_id"]     = userData.sPlatID;
+    headListReq["timestamp"]   = os.time();
+    headListReq["acc_type"]    = userData.sAcountType;
+    headListReq["game_env"]    = 1; --待确认
+    local body = {}
+    local request = {}
+    request['head'] = headListReq
+    request['body'] = body
+    Logger.DEBUG("request notice list:" .. JsonManager.EncodeJson(request))
+    Common.CallBroker(9000 , JsonManager.EncodeJson(request), MatchCenterResponseHandler.OnReceiveNoticeActivityInfo)
+end
+
+------------amz add-------
+--批量拉取对阵选手
+function MatchCenterRequestHandler.GetMatchPlayersList(teamIds, successHandler, failedHandler)
+    local userData = Common.GetUserData()
+    local bodyListReq = {}
+    local pandora_req_json = {};
+    pandora_req_json["pandora_appid"]     = "competition"
+    pandora_req_json["cmd"]     = 'competition/client/get_clanprofile'
+    pandora_req_json["team_ids"] = teamIds
+    bodyListReq["pandora_app_req"] = pandora_req_json;
+    local request = GetRequestTable(cmdType.Live, bodyListReq)
+    Logger.DEBUG("request match Players json:" .. JsonManager.EncodeJson(request))
+    Common.CallBroker(9000 , JsonManager.EncodeJson(request), MatchCenterResponseHandler.OnReceiveGetMatchPlayersList , successHandler , failedHandler)
+end
+
+-- 问题反馈接口请求 类型（整数值）格式：string/number均可
+function MatchCenterRequestHandler.FeedbackQuestion(iQuestionType,iQuestionDes,iContact)
+    local reqParams = {}
+    reqParams['c'] = 'Binduser'
+    reqParams['a'] = 'questionBack'
+    reqParams['iQuestionType']= tostring(iQuestionType)
+    reqParams['iQuestionDes']=tostring(iQuestionDes)
+    reqParams['iContact']=tostring(iContact)
+
+    local body = AssemblePaasBody(reqParams);
+    local request = GetRequestTable(cmdType.Paas, body)
+    Logger.DEBUG("request feedback:" .. JsonManager.EncodeJson(request))
+    Common.CallBroker(9000 , JsonManager.EncodeJson(request), MatchCenterResponseHandler.OnReceiveFeedback)
+end
+
+-- 粉丝包厢 查询绑定状态
+function MatchCenterRequestHandler.GetFanBoxInfo()
+    local reqParams = {}
+    reqParams['c'] = 'Binduser'
+    reqParams['a'] = 'CheckisFirst'
+    
+    local body = AssemblePaasBody(reqParams);
+    local request = GetRequestTable(cmdType.Paas, body)
+    Logger.DEBUG("request getFanBoxInfo:" .. JsonManager.EncodeJson(request))
+    Common.CallBroker(9000 , JsonManager.EncodeJson(request), MatchCenterResponseHandler.OnReceiveGetFanBox)
+end
+
+-- 粉丝包厢 设置绑定，更新绑定
+function MatchCenterRequestHandler.BindFanBox(bindId)
+    local reqParams = {}
+    reqParams['c'] = 'Binduser'
+    reqParams['a'] = 'setBind'
+    reqParams['bindId'] = tostring(bindId)
+    
+    local body = AssemblePaasBody(reqParams);
+    local request = GetRequestTable(cmdType.Paas, body)
+    Logger.DEBUG("request bindFanBox:" .. JsonManager.EncodeJson(request))
+    Common.CallBroker(9000 , JsonManager.EncodeJson(request), MatchCenterResponseHandler.OnReceiveBindFanBox)
+end
+
+-- 粉丝包厢 取消绑定
+function MatchCenterRequestHandler.CancelBindFanBox()
+    local reqParams = {}
+    reqParams['c'] = 'Binduser'
+    reqParams['a'] = 'delBind'
+    
+    local body = AssemblePaasBody(reqParams);
+    local request = GetRequestTable(cmdType.Paas, body)
+    Logger.DEBUG("request cancelFanBox:" .. JsonManager.EncodeJson(request))
+    Common.CallBroker(9000 , JsonManager.EncodeJson(request), MatchCenterResponseHandler.OnReceiveCancelBindFanBox)
+end
+------------------------------
+
+return MatchCenterRequestHandler

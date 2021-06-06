@@ -1,0 +1,294 @@
+local mt = {}
+
+local MatchCenterDataManager = require("MatchCenterDataManager")
+local MatchCenterSetting = require("MatchCenterSetting")
+local MatchCenterRequestHandler = require "MatchCenterRequestHandler"
+local MatchCenterTools           = require "MatchCenterTools"
+local MatchCenterReport = require("MatchCenterReport")
+function mt:New()
+    local o = {}
+    setmetatable(o, mt)
+    self.__index = self
+    return o
+end
+
+function mt:Init(gameObject)
+    self.buttonFunctionMap = {}
+    self.isFirstShow = true
+	self.gameObject = gameObject.transform:Find("Container_player").gameObject;
+	self.transform  = self.gameObject.transform;
+
+    -- 左侧年度选手积分榜
+    self.leftRank = self.transform:Find("Container_rank").gameObject
+    self.leftScrollView = self.transform:Find("Container_rank/Scroll View").gameObject
+    self.leftGrid = self.transform:Find("Container_rank/Scroll View/Grid").gameObject
+    self.leftItem = self.transform:Find("Container_rank/Scroll View/Grid/Container_item").gameObject
+
+    -- 右侧选手详情页
+    self.rightState = self.transform:Find("Container_state").gameObject
+    self.middleBg = self.transform:Find("Container_state/Sprite_middleBg").gameObject
+    self.rightScrollView = self.transform:Find("Container_state/Scroll View").gameObject
+    self.rightGrid = self.transform:Find("Container_state/Scroll View/Grid").gameObject
+    self.rightItem = self.transform:Find("Container_state/Scroll View/Grid/Container_item").gameObject
+
+end
+
+function mt:Render()
+    local data = MatchCenterDataManager.GetMatchData()
+    if not next(data) then
+        -- 数据异常
+        self.isFirstShow = true
+        Logger.DEBUG("PlayerPanel_SetActive:选手数据异常，再次请求选手数据")
+        MatchCenterRequestHandler.GetPlayerData()
+        MatchCenterSettings.NoticeGameShowTips("网络繁忙，请稍后重试")
+        return
+    end
+    self.playerData = data["jfList"]
+    table.sort(self.playerData, function(a,b)
+        return a["sort"] < b["sort"]
+    end)
+    Common.TablePrinter(self.playerData, "Player_Render+++++++++")
+    self:RenderRank()
+end
+
+function mt:RenderRank()
+    local lastSelectObj = nil
+    local selcetIndex = 0
+
+	local childCount = self.leftGrid.transform.childCount
+	local length = 0
+    for k,v in pairs(self.playerData) do
+        local item = nil
+        length = length + 1
+		if childCount >= length then
+			item = self.leftGrid.transform:GetChild(length - 1)
+		else
+			item = UnityEngine.GameObject.Instantiate(self.leftItem)
+		end
+		item.transform:SetParent(self.leftGrid.transform, false)
+		item.gameObject:SetActive(true)
+		item.transform.localScale = UnityEngine.Vector3.one
+        item.transform:Find("Sprite_select").gameObject:SetActive(false)
+        item.transform:Find("Label_sort"):GetComponent("UILabel").text = v["sort"]
+		item.transform:Find("Label_name"):GetComponent("UILabel").text = v["nickName"]
+		item.transform:Find("Label_honor1"):GetComponent("UILabel").text = v["topHonour1"]
+		item.transform:Find("Label_honor2"):GetComponent("UILabel").text = v["topHonour2"]
+		item.transform:Find("Label_jf"):GetComponent("UILabel").text = v["sortNum"]
+        local playerHead = item.transform:Find("Sprite_headBg/Sprite_head").gameObject
+		local HeadCallBack=function()
+			playerHead.gameObject:SetActive(true)
+			-- playerHead.transform:GetComponent("UITexture"):MakePixelPerfect();
+		end
+		Common.ShowImage(MatchCenterSetting.PanelName,"http:"..v["round_img"],playerHead,false,HeadCallBack)
+        self.buttonFunctionMap[item.gameObject]=function()
+			Common.PlaySound('9916')    --播放音效
+            selcetIndex = k
+            lastSelectObj:SetActive(false)
+            lastSelectObj = item.transform:Find("Sprite_select").gameObject
+            lastSelectObj:SetActive(true)
+			self:RenderPlayerStatus(v)
+		end
+
+        if k == 1 then
+            -- 默认展示第一位选手信息
+            self:RenderPlayerStatus(self.playerData[next(self.playerData)])
+            selcetIndex = 1
+            self.leftGrid.transform:GetChild(selcetIndex -1):Find("Sprite_select").gameObject:SetActive(true)
+            lastSelectObj = self.leftGrid.transform:GetChild(selcetIndex -1):Find("Sprite_select").gameObject
+        end
+    end
+
+
+    -- 左右切换按钮
+    self.buttonFunctionMap[self.middleBg.transform:Find("Btn_left").gameObject]=function()
+        Common.PlaySound('9916')    --播放音效
+        MatchCenterReport.ClickSelectPlayer() -- 选手切换按钮点击上报
+        if selcetIndex == 1 then
+            selcetIndex = #self.playerData
+        else
+            selcetIndex = selcetIndex -1
+        end
+        lastSelectObj:SetActive(false)
+        lastSelectObj = self.leftGrid.transform:GetChild(selcetIndex - 1):Find("Sprite_select").gameObject
+        lastSelectObj:SetActive(true)
+        self:RenderPlayerStatus(self.playerData[selcetIndex])
+
+        local moveIndex = selcetIndex
+        if moveIndex <= 4 then
+            moveIndex = 0
+        elseif 4 < moveIndex and moveIndex <= #self.playerData - 4 then
+            moveIndex = moveIndex - 4
+        else
+            moveIndex = #self.playerData - 6
+        end
+        local TablePosititon = 74 * moveIndex
+        local SpringPanel = self.leftScrollView.transform:GetComponent("SpringPanel")
+        SpringPanel.Begin(self.leftScrollView, UnityEngine.Vector3(-418, 47+TablePosititon, 0),10)
+
+    end
+    self.buttonFunctionMap[self.middleBg.transform:Find("Btn_right").gameObject]=function()
+        Common.PlaySound('9916')    --播放音效
+        MatchCenterReport.ClickSelectPlayer() -- 选手切换按钮点击上报
+        if selcetIndex == #self.playerData then
+            selcetIndex = 1
+        else
+            selcetIndex = selcetIndex + 1
+        end
+        lastSelectObj:SetActive(false)
+        -- 销毁网络图片
+        Common.ForceDeleteZeroReferenceTexture("http:"..self.playerData[selcetIndex]["tv_img"])
+        lastSelectObj = self.leftGrid.transform:GetChild(selcetIndex - 1):Find("Sprite_select").gameObject
+        lastSelectObj:SetActive(true)
+        self:RenderPlayerStatus(self.playerData[selcetIndex])
+
+        local moveIndex = selcetIndex
+        if moveIndex <= 4 then
+            moveIndex = 0
+        elseif 4 < moveIndex and moveIndex <= #self.playerData - 4 then
+            moveIndex = moveIndex - 4
+        else
+            moveIndex = #self.playerData - 6
+        end
+        local TablePosititon = 74 * moveIndex
+        local SpringPanel = self.leftScrollView.transform:GetComponent("SpringPanel")
+        SpringPanel.Begin(self.leftScrollView, UnityEngine.Vector3(-418, 47+TablePosititon, 0),10)
+    end
+    self:DestroyChild(self.leftGrid,length)
+	self.leftGrid:GetComponent("UIGrid"):Reposition()
+    local SpringPanel = self.leftScrollView.transform:GetComponent("SpringPanel")
+    SpringPanel.Begin(self.leftScrollView, UnityEngine.Vector3(-418, 47, 0),10)
+    self:AddEvents()
+
+end
+
+function mt:RenderPlayerStatus(playerStatus)
+    -- 选手展示上报
+    MatchCenterReport.ClickPlayerPanel(playerStatus["xsbq"])
+    self.middleBg.transform:Find("Label_code"):GetComponent("UILabel").text = playerStatus["xsrd"]
+    self.middleBg.transform:Find("Sprite_nameBg/Label_name"):GetComponent("UILabel").text = playerStatus["nickName"]
+    local playerHead = self.middleBg.transform:Find("Sprite_player").gameObject
+    if playerStatus["tv_img"] and playerStatus["tv_img"] ~= "" then
+        -- 渲染人物半身像
+        local HeadCallBack = function()
+            playerHead.gameObject:SetActive(true)
+            -- playerHead.transform:GetComponent("UITexture"):MakePixelPerfect();
+        end
+        Common.ShowImage(MatchCenterSetting.PanelName,"http:"..playerStatus["tv_img"],playerHead,false,HeadCallBack)
+    else
+        playerHead.gameObject:SetActive(false)
+    end
+
+    -- 常用忍者
+    for k,v in pairs(playerStatus["scrz"]) do
+        local ninjaHead = self.middleBg.transform:Find("Sprite_ninja"..k).gameObject
+		local HeadCallBack = function()
+            if ninjaHead then ninjaHead.gameObject:SetActive(true) end
+			-- ninjaHead.transform:GetComponent("UITexture"):MakePixelPerfect();
+		end
+		Common.ShowImage(MatchCenterSetting.PanelName,"http:"..v["rztx_fa"],ninjaHead,false,HeadCallBack)
+    end
+
+    -- 精彩回放列表
+	local childCount = self.rightGrid.transform.childCount
+	local length = 0
+    for k,v in pairs(playerStatus["video"]) do
+        local item = nil
+        length = length + 1
+		if childCount >= length then
+			item = self.rightGrid.transform:GetChild(length - 1)
+		else
+			item = UnityEngine.GameObject.Instantiate(self.rightItem)
+		end
+
+		item.transform:SetParent(self.rightGrid.transform, false)
+		item.gameObject:SetActive(true)
+		item.transform.localScale = UnityEngine.Vector3.one
+
+        if MatchCenterTools.SubStringGetTotalIndex(v["sTitle"]) > 20 then
+            local titleText =  MatchCenterTools.SubStringUTF8(v["sTitle"], 1, 20)
+            item.transform:Find("Label_msg"):GetComponent("UILabel").text = tostring(titleText) .. "..."
+        else
+            item.transform:Find("Label_msg"):GetComponent("UILabel").text = v["sTitle"]
+        end
+
+        local coverImg = item.transform:Find("Sprite_cover").gameObject
+		Common.ShowImage(MatchCenterSetting.PanelName,"http:"..v["sIMG"],coverImg,false,CoverCallBack)
+
+        local videoBtn = item.transform:Find("Button_jump").gameObject
+        self.buttonFunctionMap[videoBtn]=function()
+			Common.PlaySound('9916')    --播放音效
+            local htmlUrl = "https://hyrz.qq.com/ingame/a20210401videoig/index.html?vid="..v["sVID"].."&title="..MatchCenterTools.NewEncodeURI(v["sTitle"]).."&date="..string.sub(v["sIdxTime"], 1, 10).."&number="..v["iTotalPlay"]
+            MatchCenterSettings.JumpSlugSDK(htmlUrl,"1")
+            MatchCenterReport.ClickPlayerPlayBack("0",v["sVID"],v["sTitle"])
+		end
+    end
+    self:DestroyChild(self.rightGrid,length)
+    self.rightGrid:GetComponent("UIGrid"):Reposition()
+	self.rightScrollView:GetComponent("UIScrollView"):ResetPosition()
+    self:AddEvents()
+
+end
+
+
+-- 销毁多余子物体
+function mt:DestroyChild(childParent,needCount)
+    local childCount = childParent.transform.childCount
+    if tonumber(childCount) <= tonumber(needCount) then
+        return Logger.DEBUG("子物体数量不需要销毁")
+    end
+
+    for index = childCount -1 ,needCount, -1 do
+        local curChildCount = childParent.transform.childCount
+        if tonumber(curChildCount) <= 4 then
+            Logger.DEBUG("schedule隐藏子物体")
+            childParent.transform:GetChild(index).gameObject:SetActive(false)
+        else
+            Logger.DEBUG("schedule 同步销毁子物体")
+            UnityEngine.GameObject.DestroyImmediate(childParent.transform:GetChild(index).gameObject)
+        end
+    end
+end
+
+-- 添加按钮绑定事件
+function mt:AddEvents()
+	for button, response in pairs(self.buttonFunctionMap) do
+		if button ~= nil and button.gameObject ~= nil  and Slua.IsNull(button) == false then
+			UIEventListener.Get(button).onClick = response
+		end
+	end
+end
+
+-- 移除按钮绑定事件
+function mt:RemoveEvents()
+	for button, response in pairs(self.buttonFunctionMap) do
+		if button ~= nil and button.gameObject ~= nil  and Slua.IsNull(button) == false then
+			UIEventListener.Get(button).onClick = nil
+		end
+	end
+	self.buttonFunctionMap = {};
+end
+
+
+-- 必须要实现的方法
+function mt:SetActive(flag)
+    self.gameObject:SetActive(flag)
+    if flag and self.isFirstShow then
+        self.isFirstShow = false
+        self:Render()
+    end
+end
+
+function mt:HandleJump(jumpParams)
+    if jumpParams and type(jumpParams) == "string" then
+        Logger.DEBUG("player19++++++++++++++++++++",jumpParams)
+    end
+end
+
+function mt:Destroy()
+    Logger.DEBUG("player_Destroy 55+++++++++++++++++++++++")
+    for k , _ in pairs(self) do
+        self[k] = nil
+    end
+end
+
+return mt

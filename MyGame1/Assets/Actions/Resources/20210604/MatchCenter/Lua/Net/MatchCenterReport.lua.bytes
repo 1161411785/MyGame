@@ -1,0 +1,326 @@
+require "Common"
+require "JsonManager"
+
+local MatchCenterSettings =  require "MatchCenterSetting"
+local MatchCenterReport = {}
+local Logger = Common.GetLogger()
+
+local userData = Common.GetUserData()
+
+--发送统计上报
+function MatchCenterReport.SendStatistics(uint_reportType, uint_infoId, uint_actstyle, str_goodsId, extend)
+    local jsonReq = MatchCenterReport.GetStatisticsReq(uint_reportType, uint_infoId, uint_actstyle, str_goodsId, extend)
+    Common.CallBroker(5001, jsonReq)
+end
+
+--生成统计上报的请求串
+function MatchCenterReport.GetStatisticsReq(uint_reportType, uint_infoId,uint_actstyle, str_goodsId, extend)
+	local tableStatisticsReq = {}
+	tableStatisticsReq["str_open_id"] = tostring(userData.sOpenId)
+	tableStatisticsReq["str_appid"] = tostring(userData.sAppId)
+	tableStatisticsReq["str_sdkversion"] = tostring(Common.GetSDKVersion())
+	tableStatisticsReq["partition"] = tostring(userData.sPartition)
+	tableStatisticsReq["sroleid"] = tostring(userData.sRoleId)
+	tableStatisticsReq["str_phoneid"] = ""
+	tableStatisticsReq["uint_clientip"] = 0
+	tableStatisticsReq["uint_ostype"] = tonumber(userData.sPlatID)
+	tableStatisticsReq["recommend_id"] = "0"
+	tableStatisticsReq["changjing_id"] = "0"
+	tableStatisticsReq["goods_id"] = str_goodsId and tostring(str_goodsId) or "0" --默认为'0'
+	tableStatisticsReq["uint_module"] = tonumber(MatchCenterSettings.ModuleId)
+	tableStatisticsReq["uint_channel_id"] = tonumber(MatchCenterSettings.ChannelId)
+	tableStatisticsReq["uint_type"] = tonumber(uint_reportType)
+	tableStatisticsReq["uint_act_id"] = uint_infoId and tonumber(uint_infoId) or 0 --默认为0
+	tableStatisticsReq["uint_timestamp"] = tonumber(os.time())
+	tableStatisticsReq["uint_jump_type"] = 0
+	tableStatisticsReq["str_jump_url"] = ""
+	tableStatisticsReq["uint_count"] = 0 --默认为0
+	tableStatisticsReq["uint_fee"] = 0
+	tableStatisticsReq["currency_type"] = "0" 
+	tableStatisticsReq["act_style"] = uint_actstyle and tonumber(uint_actstyle) or tonumber(MatchCenterSettings.ActStyle)
+	tableStatisticsReq["flow_id"] =  0 -- 默认为0
+	tableStatisticsReq["extend"] = extend or {{}}
+    return JsonManager.EncodeJson(tableStatisticsReq)
+end
+
+
+
+-- 打开上报
+function MatchCenterReport.OpenPanel()
+    MatchCenterReport.SendStatistics(4,0,0,0)
+end
+
+-- 关闭
+function MatchCenterReport.ClosePanel()
+    MatchCenterReport.SendStatistics(5,0,0,0)
+end
+
+-- 展示
+function MatchCenterReport.ShowPanel()
+	MatchCenterReport.SendStatistics(1,MatchCenterSettings.GetInfoId(),MatchCenterSettings.ActStyle,0)
+end
+
+-- gyq add 直播平台上报（带活动ID）livePlatId
+function MatchCenterReport.ShowlivePlat(anchorId,livePlatId)
+	local extend = {
+		{
+			['name']  = 'reserve0',
+			['value'] = tostring(anchorId)
+		},
+		{
+			['name']  = 'reserve1',
+			['value'] = tostring(livePlatId)
+		}
+	}
+	MatchCenterReport.SendStatistics(9,MatchCenterSettings.GetInfoId(),MatchCenterSettings.ActStyle,0,extend)
+end
+
+-- 导航栏点击上报
+function MatchCenterReport.ClickNatigationTab(type)
+	MatchCenterReport.SendStatistics(type, MatchCenterSettings.GetInfoId(),MatchCenterSettings.ActStyle,0)
+end
+
+
+-- 播放
+function MatchCenterReport.ClickResumeBtn()
+	MatchCenterReport.SendStatistics(17, MatchCenterSettings.GetInfoId(),MatchCenterSettings.ActStyle,0)
+end
+
+-- 暂停
+function MatchCenterReport.ClickPauseBtn()
+	MatchCenterReport.SendStatistics(18, MatchCenterSettings.GetInfoId(),MatchCenterSettings.ActStyle,0)
+end
+
+-- 打开弹幕
+function MatchCenterReport.ClickBulletOnBtn()
+	MatchCenterReport.SendStatistics(19, MatchCenterSettings.GetInfoId(),MatchCenterSettings.ActStyle,0)
+end
+
+-- 关闭弹幕
+function MatchCenterReport.ClickBulletOffBtn()
+	MatchCenterReport.SendStatistics(20, MatchCenterSettings.GetInfoId(),MatchCenterSettings.ActStyle,0)
+end
+
+-- 全屏
+function MatchCenterReport.ClickFullScreenBtn()
+	MatchCenterReport.SendStatistics(21, MatchCenterSettings.GetInfoId(),MatchCenterSettings.ActStyle,0)
+end
+
+-- 清晰度点击上报
+function MatchCenterReport.ClickDefinition(id)
+	--上报清晰度 流畅-1；高清-2；超清-3；智能-4
+	if tostring(id) == "3" then
+		id = "1"
+	elseif tostring(id) == "1" then
+		id = "3"
+	end
+	local extend = {
+		{
+			['name']  = 'reserve0',
+			['value'] = tostring(id)
+		}
+	}
+	MatchCenterReport.SendStatistics(41, MatchCenterSettings.GetInfoId(),MatchCenterSettings.ActStyle,0,extend)
+end
+
+-- 退出全屏
+function MatchCenterReport.ClickExitFullScreenBtn()
+	MatchCenterReport.SendStatistics(22, MatchCenterSettings.GetInfoId(),MatchCenterSettings.ActStyle,0)
+end
+
+
+-- 聊天页签
+function MatchCenterReport.ClickChatTab()
+	MatchCenterReport.SendStatistics(23, MatchCenterSettings.GetInfoId(),MatchCenterSettings.ActStyle,0)
+end
+
+-- 发送弹幕
+function MatchCenterReport.ClickSendBulletBtn()
+	MatchCenterReport.SendStatistics(24, MatchCenterSettings.GetInfoId(),MatchCenterSettings.ActStyle,0)
+end
+
+-- 赛程页签
+function MatchCenterReport.ClickScheduleTab()
+	MatchCenterReport.SendStatistics(27, MatchCenterSettings.GetInfoId(),MatchCenterSettings.ActStyle,0)
+end
+
+-- 赛程页面，点击赛程页签
+function MatchCenterReport.ClickScheduleUpTab(id,subId,title)
+	local extend = {
+		{
+			['name']  = 'reserve0',
+			['value'] = tostring(id)
+		},
+		{
+			['name']  = 'reserve1',
+			['value'] = tostring(subId)
+		},
+		{
+			['name']  = 'reserve2',
+			['value'] = tostring(title)
+		},
+	}
+	MatchCenterReport.SendStatistics(14, MatchCenterSettings.GetInfoId(),MatchCenterSettings.ActStyle,0,extend)
+end
+
+-- 订阅赛程
+function MatchCenterReport.ClickBookScheduleBtn(id, subId, title)
+	local extend = {
+		{
+			['name']  = 'reserve0',
+			['value'] = tostring(id)
+		},
+		{
+			['name']  = 'reserve1',
+			['value'] = tostring(subId)
+		},
+		{
+			['name']  = 'reserve2',
+			['value'] = tostring(title)
+		},
+	}
+	MatchCenterReport.SendStatistics(28, MatchCenterSettings.GetInfoId(),MatchCenterSettings.ActStyle, 0, extend)
+end
+
+-- 奖励页签
+function MatchCenterReport.ClickTaskTab()
+	MatchCenterReport.SendStatistics(29, MatchCenterSettings.GetInfoId(),MatchCenterSettings.ActStyle,0)
+end
+
+
+-- 奖励领取
+function MatchCenterReport.ClickGetReword(taskId, goodsId)
+	local extend = {
+		{
+			['name']  = 'reserve0',
+			['value'] = tostring(taskId)
+		}
+	}
+	MatchCenterReport.SendStatistics(31, MatchCenterSettings.GetInfoId(),MatchCenterSettings.ActStyle, goodsId, extend)
+end
+
+-- 点击天选之子入口
+function MatchCenterReport.ClickLotteryEntrance()
+	MatchCenterReport.SendStatistics(44, MatchCenterSettings.GetInfoId(),MatchCenterSettings.ActStyle,0)
+end
+
+
+-- 回放页面点击上报
+function MatchCenterReport.ClickPlayBack()
+	MatchCenterReport.SendStatistics(35, MatchCenterSettings.GetInfoId(),MatchCenterSettings.ActStyle,0)
+end
+
+-- 回放页面 看回放按钮点击上报
+function MatchCenterReport.ClickWatchPlayBack(id,subId,title)
+	local extend = {
+		{
+			['name']  = 'reserve0',
+			['value'] = tostring(id)
+		},
+		{
+			['name']  = 'reserve1',
+			['value'] = tostring(subId)
+		},
+		{
+			['name']  = 'reserve2',
+			['value'] = tostring(title)
+		},
+	}
+	MatchCenterReport.SendStatistics(36, MatchCenterSettings.GetInfoId(),MatchCenterSettings.ActStyle,0,extend)
+end
+
+-- 赛事数据展示上报
+function MatchCenterReport.ClickMatchData()
+	MatchCenterReport.SendStatistics(37, MatchCenterSettings.GetInfoId(),MatchCenterSettings.ActStyle,0)
+end
+
+-- 选手页面展示上报
+function MatchCenterReport.ClickPlayerPanel(id)
+	local extend = {
+		{
+			['name']  = 'reserve0',
+			['value'] = tostring(id)
+		}
+	}
+	MatchCenterReport.SendStatistics(38, MatchCenterSettings.GetInfoId(),MatchCenterSettings.ActStyle,0,extend)
+end
+
+-- 选手切换上报
+function MatchCenterReport.ClickSelectPlayer()
+	MatchCenterReport.SendStatistics(39, MatchCenterSettings.GetInfoId(),MatchCenterSettings.ActStyle,0)
+end
+
+-- 选手回放视频点击上报
+function MatchCenterReport.ClickPlayerPlayBack(id,subId,title)
+	local extend = {
+		{
+			['name']  = 'reserve0',
+			['value'] = tostring(id)
+		},
+		{
+			['name']  = 'reserve1',
+			['value'] = tostring(subId)
+		},
+		{
+			['name']  = 'reserve2',
+			['value'] = tostring(title)
+		},
+	}
+	MatchCenterReport.SendStatistics(40, MatchCenterSettings.GetInfoId(),MatchCenterSettings.ActStyle,0,extend)
+end
+
+
+
+
+
+
+
+
+-- 活动展示
+function MatchCenterReport.ShowNoticeAct(noticeId)
+	local extend = {
+		{
+			['name']  = 'reserve0',
+			['value'] = tostring(noticeId)
+		}
+	}
+	MatchCenterReport.SendStatistics(32, MatchCenterSettings.GetInfoId(), MatchCenterSettings.ActStyle, 0, extend)
+end
+
+
+-- 公告活动页签点击
+function MatchCenterReport.ClickNoticeTab(noticeId)
+	local extend = {
+		{
+			['name']  = 'reserve0',
+			['value'] = tostring(noticeId)
+		}
+	}
+	MatchCenterReport.SendStatistics(33, MatchCenterSettings.GetInfoId(), MatchCenterSettings.ActStyle, 0, extend)
+end
+
+
+-- 公告活动跳转点击
+function MatchCenterReport.ClickNoticeJumpBtn(noticeId)
+	local extend = {
+		{
+			['name']  = 'reserve0',
+			['value'] = tostring(noticeId)
+		}
+	}
+	MatchCenterReport.SendStatistics(34, MatchCenterSettings.GetInfoId(), MatchCenterSettings.ActStyle, 0, extend)
+end
+
+
+-- Lua执行
+function MatchCenterReport.RunLua()
+    MatchCenterReport.SendStatistics(30,0,MatchCenterSettings.ActStyle,0)
+end
+
+-- 活动资格上报
+function MatchCenterReport.ActivityQualification()
+    MatchCenterReport.SendStatistics(30, MatchCenterSettings.GetInfoId() ,MatchCenterSettings.ActStyle,0)
+end
+
+
+return MatchCenterReport

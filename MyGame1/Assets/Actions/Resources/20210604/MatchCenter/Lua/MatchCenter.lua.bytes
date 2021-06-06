@@ -1,0 +1,5 @@
+-- 入口文件
+-- 每个活动必须需要
+--require("LuaPanda").start("127.0.0.1",8818);
+local index = require "MatchCenterController"
+index:New():Init()

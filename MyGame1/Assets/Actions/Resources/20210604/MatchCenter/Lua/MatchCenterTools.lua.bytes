@@ -1,0 +1,256 @@
+require "Common"
+
+local MatchCenterTools = {}
+
+local Logger = Common.GetLogger()
+
+
+
+--返回当前字符实际占用的字符数
+local function SubStringGetByteCount(str, index)
+    local curByte = string.byte(str, index)
+    local byteCount = 1;
+    if curByte == nil then
+        byteCount = 0
+    elseif curByte > 0 and curByte <= 127 then
+        byteCount = 1
+    elseif curByte>=192 and curByte<=223 then
+        byteCount = 2
+    elseif curByte>=224 and curByte<=239 then
+        byteCount = 3
+    elseif curByte>=240 and curByte<=247 then
+        byteCount = 4
+    end
+    return byteCount;
+end
+
+
+
+
+local function SubStringGetTrueIndex(str, index)
+    local curIndex = 0;
+    local i = 1;
+    local lastCount = 1;
+    repeat
+        lastCount = SubStringGetByteCount(str, i)
+        i = i + lastCount;
+        curIndex = curIndex + 1;
+    until(curIndex >= index);
+    return i - lastCount;
+end
+
+
+
+--获取中英混合UTF8字符串的真实字符数量
+local function SubStringGetTotalIndex(str)
+    local curIndex = 0;
+    local i = 1;
+    local lastCount = 1;
+    repeat
+        lastCount = SubStringGetByteCount(str, i)
+        i = i + lastCount;
+        curIndex = curIndex + 1;
+    until(lastCount == 0);
+    return curIndex - 1;
+end
+
+
+function MatchCenterTools.SubStringGetTotalIndex(str)
+    local curIndex = 0;
+    local i = 1;
+    local lastCount = 1;
+    repeat
+        lastCount = SubStringGetByteCount(str, i)
+        i = i + lastCount;
+        curIndex = curIndex + 1;
+    until(lastCount == 0);
+    return curIndex - 1;
+end
+
+
+-- 截取中英文混合的字符串 --
+function MatchCenterTools.SubStringUTF8(str, startIndex, endIndex)
+    if startIndex < 0 then
+        startIndex = SubStringGetTotalIndex(str) + startIndex + 1;
+    end
+
+    if endIndex ~= nil and endIndex < 0 then
+        endIndex = SubStringGetTotalIndex(str) + endIndex + 1;
+    end
+
+    if endIndex == nil then
+        return string.sub(str, SubStringGetTrueIndex(str, startIndex));
+    else
+        return string.sub(str, SubStringGetTrueIndex(str, startIndex), SubStringGetTrueIndex(str, endIndex + 1) - 1);
+    end
+end
+
+
+-- 字符串分割成table
+function MatchCenterTools.Split(str, delimiter)
+    if str == nil or str == '' or delimiter == nil then
+        return nil
+    end
+    local result = {}
+    for match in (str..delimiter):gmatch("(.-)"..delimiter) do
+        table.insert(result, match)
+    end
+    return result
+end
+
+-- 格式化聊天内容，解决NGUI纯字符不换行问题
+function MatchCenterTools.FormatChatContent(str)
+    -- 6 15 15
+    if string.match(str, "[^!-~]") == nil then
+        local len = string.len(str)
+        if len <= 6 then
+            return str
+        elseif len > 6 and len < 20 then
+            local a = string.sub(str, 1, 6)
+            local b = string.sub(str, 7, len)
+            return a .. "\n" .. b
+        elseif len >= 20 and len < 34 then
+            local a = string.sub(str, 1, 6)
+            local b = string.sub(str, 7, 20)
+            local c = string.sub(str, 21, len)
+            return a .. "\n" .. b .. "\n" .. c
+        elseif len >= 34 then
+            local a = string.sub(str, 1, 6)
+            local b = string.sub(str, 7, 20)
+            local c = string.sub(str, 21, 34)
+            local d = string.sub(str, 35, len)
+            return a .. "\n" .. b .. "\n" .. c .. "\n" .. d
+        end
+    else
+        return str
+    end
+end
+
+
+-- 获取当日的最后时间戳
+function MatchCenterTools.GetTodayLastTime()
+    local date = os.date("*t",os.time());
+    -- local date = os.date("*t", 1588073801)
+    return os.time{year = date.year, month = date.month, day = date.day, hour = 23,min = 59, sec = 59}
+end
+
+
+
+function MatchCenterTools.RoundNum(num, numDecimalPlaces)
+    local mult = 10^(numDecimalPlaces or 0)
+    return math.floor(num * mult + 0.5) / mult
+end
+
+function MatchCenterTools.FormatViewNum(numStr)
+    local num = tonumber(numStr)
+    if num < 10000 then
+        return tostring(num)
+    else
+        return string.format("%s万", MatchCenterTools.RoundNum(num / 10000, 1));
+    end
+end
+
+--[[ -- 是否是模拟器
+function MatchCenterTools.IsSimulator()
+    -- 腾讯助手 DeviceModel=Tencent virtual machine 2
+     -- 网易MuMu DeviceModel=Netease MuMu
+     -- 夜神模拟器 设备信息与真机一模一样，不好做判断
+     -- 海马玩 应用商店不提供下载魂斗罗，不处理
+     local systemInfo = UnityEngine.SystemInfo
+     if systemInfo == nil or systemInfo.deviceModel ==nil or systemInfo.operatingSystem == nil or systemInfo.graphicsDeviceName == nil then
+         return false
+     end
+     if string.find(systemInfo.deviceModel, "virtual") ~= nil or string.find(systemInfo.deviceModel, "MuMu") ~= nil then 
+         return true
+     end
+     if string.find(systemInfo.operatingSystem, "kot49h/eng.bruce") ~= nil then   -- 腾讯助手 自定义设备型号的情况
+         return true
+     end
+     if string.find(systemInfo.graphicsDeviceName, "direct3d11") ~= nil then  -- 模拟器 显卡为D3D的情况
+         return true
+     end
+     return false
+end ]]
+
+--------------模拟器判断--amz add-------------------------------
+function MatchCenterTools.IsSimulator()
+    if Common.GetPlatformDesc() == "android" then
+        local status, KHGlobalExt= xpcall(function ()
+            return Slua.GetClass("KH.KHGlobalExt")
+        end,function (err)
+            Logger.DEBUG("can not get KHGlobalExt class")
+        end);
+        if not status then
+            return false;
+        end
+        
+        local platformType = KHGlobalExt.GetPlatformType()
+        --Logger.DEBUG("是否模拟器++++++++++++++++++++++++++++198="..tostring(platformType))
+        return  tonumber(platformType) ~=-10 and tonumber(platformType) ~=-9 and tonumber(platformType) ~=0 
+    else
+        return false
+    end
+end
+
+-----------------------amz add-----------------------------------------------
+-- URI 加密
+-- @param s : string 待 encode 的串
+-- @return    nil or string 加密后的串(参数错误时返回 nil)
+-----------------------------------------------------------------------------
+function MatchCenterTools.EncodeURI(s)
+    if "string" ~= type(s) then
+        Logger.ERROR("Not A String.")
+        return nil
+    end
+
+    s = string.gsub(s, "([^%w%.%- ])", function(c)
+        return string.format("%%%02X", string.byte(c))
+    end)
+    return string.gsub(s, " ", "+")
+end
+
+-----------------------------------------------------------------------------
+-- desc URI 解密
+-- @param s : string 待 decode 的串
+-- @return    nil or string 解密后的串(参数错误时返回 nil)
+-----------------------------------------------------------------------------
+function MatchCenterTools.DecodeURI(s)
+    if "string" ~= type(s) then
+        Logger.ERROR("Not A String.")
+        return nil
+    end
+
+    s = string.gsub(s, "%%(%x%x)",
+                    function(h) return string.char(tonumber(h, 16)) end)
+    return s
+end
+
+-----------------------------------------------------------------------------
+
+-----------------------------------------------------------------------------
+-- URI 加密
+-- @param s : string 待 encode 的串
+-- @return    nil or string 加密后的串(参数错误时返回 nil) 不会将空格替换为+ 而是转义成%20
+-----------------------------------------------------------------------------
+function MatchCenterTools.NewEncodeURI(s)
+    if "string" ~= type(s) then
+        Util.Error("Not A String.")
+        return nil
+    end
+
+    s = string.gsub(s, "([^%w%.%- ])", function(c)
+        return string.format("%%%02X", string.byte(c))
+    end)
+    s = MatchCenterTools.Split(s," ")
+    local str = nil
+    for k,v in pairs(s) do
+        if not str then
+            str = v
+        else
+            str = str.."%20"..v
+        end
+    end
+    return str
+end
+
+return MatchCenterTools

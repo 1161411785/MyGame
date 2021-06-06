@@ -1,0 +1,571 @@
+require ("Common")
+
+local MatchCenterSetting = require "MatchCenterSetting"
+local MatchCenterRequestHandler = require "MatchCenterRequestHandler"
+local MatchCenterResponseHandler 	= require "MatchCenterResponseHandler"
+local MatchCenterDataManager = require "MatchCenterDataManager"
+local MatchCenterReport = require "MatchCenterReport"
+local MatchCenterEvent   = require "MatchCenterEvent"
+local Logger = Common.GetLogger()
+local mt = {}
+
+function mt:New()
+    local o = {}
+    setmetatable(o, mt)
+    self.__index = self
+    return o
+end
+
+function mt:Init(gameObject)
+    self.gameObject = gameObject
+    self.transform  = self.gameObject.transform
+
+    self.scheduleClose = self.transform:Find("Btn_close"):GetComponent("UIButton").gameObject
+
+    -- 赛事菜单scroll view
+    self.scrollViewUp = self.transform:Find("Scroll View_up").gameObject
+    self.gridUp = self.transform:Find("Scroll View_up/Grid").gameObject
+    self.menuTemplate = self.transform:Find("Scroll View_up/Grid/Container_menuTemplate").gameObject
+
+    -- 赛事对局 scroll view
+    self.scrollViewMatch = self.transform:Find("Scroll View_match").gameObject
+    self.tableWeek = self.transform:Find("Scroll View_match/Table_week").gameObject
+    self.dateTemplate = self.transform:Find("Scroll View_match/Table_week/Container_dateTemplate").gameObject
+    self.tableMatch = self.transform:Find("Scroll View_match/Table_match").gameObject
+    self.matchTemplate = self.transform:Find("Scroll View_match/Table_match/Container_template").gameObject
+    self.lteMatchTemplate = self.transform:Find("Scroll View_match/Table_match/Container_template/Container_matchTemplate").gameObject
+    self.buttonFunctionMap = {}
+    self.isRender = false
+
+    -- self.template = self.transform:Find("Container_template").gameObject
+    -- self.scrollView = self.transform:Find("Scroll View").gameObject
+    -- self.grid = self.transform:Find("Scroll View/Grid").gameObject
+    -- self.noDataBg = self.transform:Find("Texture_nodata").gameObject
+    -- self.noDataLabel = self.transform:Find("Label_nodata").gameObject
+
+end
+
+-- clone表数据
+function mt:cloneTab(org)
+    local function copy(org, res)
+        for k,v in pairs(org) do
+            if type(v) ~= "table" then
+                res[k] = v;
+            else
+                res[k] = {};
+                copy(v, res[k])
+            end
+        end
+    end
+    local res = {}
+    copy(org, res)
+    return res
+end
+
+-- 设置日期
+function mt:SettleDate(time)
+    local year = os.date("%y",time)
+    local month = os.date("%m",time)
+    local day = os.date("%d",time)
+    local hour = os.date("%H",time)
+    local min = os.date("%M",time)
+    local week = os.date("%w",time)
+    local weekTab = {"星期一","星期二","星期三","星期四","星期五","星期六"} weekTab[0] = "星期日"
+    week = weekTab[tonumber(week)]
+    return year, month, day, hour, min, week
+end
+
+-- 解析数据
+function mt:SettleMatchData(contest_id)
+    local scheduleInfo = MatchCenterDataManager.GetScheduleInfo()
+    local curMatchTable = nil
+    -- 获取当前赛事数据
+    for k,v in pairs(scheduleInfo) do
+        if tostring(contest_id) == tostring(v["contest_id"]) then
+            curMatchTable = v["contest_data"]
+        end
+    end
+    if not curMatchTable then
+		Logger.DEBUG("赛程：暂未开放，敬请期待")
+		return false
+	end
+    table.sort(curMatchTable, function(a,b)
+        return a["start_time"] < b["start_time"]
+    end)
+    -- 整理赛事数据结构
+    local lastDate = nil
+    local settleMatchTable = {}
+    for k,v in pairs(curMatchTable) do
+        local year, month, day, hour, min, week = self:SettleDate(v["start_time"])
+        month = tonumber(month)
+        day = tonumber(day)
+        v["matchDate"] =month.."月"..day.."日"
+        v["curWeek"] = week
+        v["title_time"] = hour..":"..min
+        if not lastDate or lastDate ~= v["matchDate"] then
+            lastDate = v["matchDate"]
+            settleMatchTable[os.date("%m%d",v["start_time"])] = {}
+        end
+        table.insert(settleMatchTable[os.date("%m%d",v["start_time"])],v)
+    end
+    local sortMatchTab = {}
+    for k,v in pairs(settleMatchTable) do
+        table.insert(sortMatchTab, k)
+    end
+    table.sort(sortMatchTab, function(a,b)
+        return a < b
+    end)
+    Common.TablePrinter(settleMatchTable, "Schedule150++++++++++++++")
+    return settleMatchTable, sortMatchTab
+end
+
+-- 渲染标签栏
+function mt:Render()
+    -- 设置关闭按钮
+    self.buttonFunctionMap[self.scheduleClose]=function()
+        Common.PlaySound('9916')    --播放音效
+        self.gameObject:SetActive(false)
+        EventDispatcher.DispatchEvent(MatchCenterEvent.SwitchToggle, "chat")
+    end
+
+    -- 获取赛程数据
+    local scheduleInfo = MatchCenterDataManager.GetScheduleInfo()
+    Common.TablePrinter(scheduleInfo,"Schedule:")
+    -- 渲染赛程数据 contest_name
+    if scheduleInfo == nil or #scheduleInfo == 0 then
+        -- 无赛程数据，展示无赛程
+        MatchCenterSettings.NoticeGameShowTips("网络异常，请稍后重试")
+        self.gameObject:SetActive(false)
+        EventDispatcher.DispatchEvent(MatchCenterEvent.SwitchToggle, "chat")
+        MatchCenterRequestHandler.GetContestList(MatchCenterDataManager.GetContestIds(),MatchCenterResponseHandler.OnReceiveContestList)
+        return
+    end
+    table.sort(scheduleInfo, function(a,b)
+        return a["contest_id"] > b["contest_id"]
+    end)
+
+    -- 获取初始化赛程相关信息
+    local actInfo = MatchCenterDataManager.GetActivityInfo()
+	local contestInfo = self:cloneTab(actInfo["contestList"])
+	table.sort(contestInfo, function(a,b)
+		return tonumber(a["start_time"]) < tonumber(b["start_time"])
+	end)
+    -- 没有相关赛程的数据不展示标签栏
+    for index = #contestInfo , 1 ,-1 do
+        if tostring(contestInfo[index]["contest_id"]) == "8" then
+            table.remove(contestInfo, index)
+        else
+            local isExist = false
+            for k,v in pairs(scheduleInfo) do
+                if tostring(contestInfo[index]["contest_id"]) == tostring(v["contest_id"]) then
+                    -- 说明存在相关赛事
+                    isExist = true
+                end
+            end
+            if not isExist then
+                table.remove(contestInfo,index)
+            end
+        end
+    end
+    self.gameObject:SetActive(false)
+    self.transform.parent.gameObject:SetActive(true)
+    local curSelectObj = nil
+    -- 渲染标签栏
+    local childCount = self.gridUp.transform.childCount
+    for k , v in pairs(contestInfo) do
+        local menuItem = nil
+        if childCount >= k then
+            menuItem = self.gridUp.transform:GetChild(k - 1)
+        else
+            menuItem = UnityEngine.GameObject.Instantiate(self.menuTemplate)
+        end
+        menuItem.name = "Container_schedule_" .. k
+        menuItem.transform:SetParent(self.gridUp.transform, false)
+        menuItem.gameObject:SetActive(true)
+        menuItem.transform.localScale = UnityEngine.Vector3.one
+        self.gridUp:GetComponent("UIGrid"):Reposition()
+        --self:SetItemInfo(item, v)
+        menuItem.transform:Find("Sprite_select").gameObject:SetActive(false)
+        menuItem.transform:Find("Sprite_select/Label_msg"):GetComponent("UILabel").text = v["contest_name"]
+        menuItem.transform:Find("Sprite_normal").gameObject:SetActive(true)
+        menuItem.transform:Find("Sprite_normal/Label_msg"):GetComponent("UILabel").text = v["contest_name"]
+
+        -- 给标签栏添加按钮事件
+        self.buttonFunctionMap[menuItem.transform:GetComponent("UIButton").gameObject]=function()
+            Common.PlaySound('9916')    --播放音效
+            -- 渲染标签栏下具体赛事信息
+            curSelectObj.transform:Find("Sprite_select").gameObject:SetActive(false)
+            curSelectObj.transform:Find("Sprite_normal").gameObject:SetActive(true)
+            menuItem.transform:Find("Sprite_select").gameObject:SetActive(true)
+            menuItem.transform:Find("Sprite_normal").gameObject:SetActive(false)
+            curSelectObj = menuItem
+            self:RenderMatch(v["contest_id"])
+            MatchCenterReport.ClickScheduleUpTab(0,v["contest_id"],v["contest_name"])
+        end
+    end
+    curSelectObj = self.gridUp.transform:GetChild(0).gameObject
+    curSelectObj.transform:Find("Sprite_select").gameObject:SetActive(true)
+    curSelectObj.transform:Find("Sprite_normal").gameObject:SetActive(false)
+    self:RenderMatch(contestInfo[1]["contest_id"])
+    MatchCenterReport.ClickScheduleUpTab(0,contestInfo[1]["contest_id"],contestInfo[1]["contest_name"])
+    -- 排列
+    -- self.grid:GetComponent("UIGrid"):Reposition()
+    -- self.grid.transform.localPosition=UnityEngine.Vector3(0,0,0)
+    self:AddEvents()
+end
+
+-- 渲染标签栏对应的赛事数据
+function mt:RenderMatch(contest_id)
+    local settleMatchTable,sortMatchTab = self:SettleMatchData(contest_id)
+	if not settleMatchTable or not sortMatchTab then
+		MatchCenterSettings.NoticeGameShowTips("暂未开放，敬请期待")
+		return
+	end
+
+    local tabLength = 0
+    local tableWeekCount = self.tableWeek.transform.childCount
+    local tableMatchCount = self.tableMatch.transform.childCount
+    for k,v in pairs(sortMatchTab) do
+        local curTableWeek = nil
+        local curTableMatch = nil
+        tabLength = tabLength + 1
+        -- 创建日期栏
+        if tableWeekCount >= tabLength then
+            curTableWeek = self.tableWeek.transform:GetChild(tabLength - 1)
+        else
+            curTableWeek = UnityEngine.GameObject.Instantiate(self.dateTemplate)
+        end
+        curTableWeek.transform:SetParent(self.tableWeek.transform, false)
+        curTableWeek.gameObject:SetActive(true)
+        curTableWeek.transform.localScale = UnityEngine.Vector3.one
+        curTableWeek.transform:Find("Label_date"):GetComponent("UILabel").text = settleMatchTable[v][1]["matchDate"]
+        curTableWeek.transform:Find("Label_week"):GetComponent("UILabel").text = settleMatchTable[v][1]["curWeek"]
+
+
+        -- 渲染多少个比赛日
+        if tableMatchCount >= tabLength then
+            curTableMatch = self.tableMatch.transform:GetChild(tabLength - 1)
+        else
+            curTableMatch = UnityEngine.GameObject.Instantiate(self.matchTemplate)
+        end
+        curTableMatch.transform:SetParent(self.tableMatch.transform, false)
+        curTableMatch.gameObject:SetActive(true)
+        curTableMatch.transform.localScale = UnityEngine.Vector3.one
+        curTableMatch.name = "Container_template" .. tabLength
+        -- 渲染每日比赛小场信息
+        local matchDayCount = curTableMatch.transform.childCount
+        for k1,v1 in pairs(settleMatchTable[v]) do
+            -- 渲染 当前赛事
+            local lteMatchItem = nil
+            if matchDayCount >= k1 then
+                lteMatchItem = curTableMatch.transform:GetChild(k1 - 1)
+            else
+                lteMatchItem = UnityEngine.GameObject.Instantiate(self.lteMatchTemplate)
+            end
+            lteMatchItem.transform:SetParent(curTableMatch.transform, false)
+            lteMatchItem.gameObject:SetActive(true)
+            lteMatchItem.transform.localScale = UnityEngine.Vector3.one
+            curTableMatch:GetComponent("UIGrid"):Reposition()
+
+            lteMatchItem.transform:Find("Label_time"):GetComponent("UILabel").text = v1["title_time"]
+            lteMatchItem.transform:Find("Label_msg"):GetComponent("UILabel").text = v1["stage"]
+            local score = lteMatchItem.transform:Find("Label_score")
+            local score1 = lteMatchItem.transform:Find("Label_score1")
+            score:GetComponent("UILabel").text = v1["score"]
+            score1:GetComponent("UILabel").text = v1["score"]
+
+            if v1["clanA_info"] and v1["clanA_info"] ~= "" then
+                local leftHead = lteMatchItem.transform:Find("Sprite_left/Sprite_Player").gameObject
+                local LeftHeadCallBack=function()
+                    if leftHead and leftHead.gameObject then leftHead.gameObject:SetActive(true) end
+                    --leftHead.transform:GetComponent("UITexture"):MakePixelPerfect();
+                end
+                Common.ShowImage(MatchCenterSetting.PanelName,"http:"..v1["clanA_info"]["clan_logo"],leftHead,false,LeftHeadCallBack)
+
+                local rightHead = lteMatchItem.transform:Find("Sprite_right/Sprite_Player").gameObject
+                local RightHeadCallBack=function()
+                    if rightHead and rightHead.gameObject then rightHead.gameObject:SetActive(true) end
+                    --rightHead.transform:GetComponent("UITexture"):MakePixelPerfect();
+                end
+                Common.ShowImage(MatchCenterSetting.PanelName,"http:"..v1["clanB_info"]["clan_logo"],rightHead,false,RightHeadCallBack)
+
+                lteMatchItem.transform:Find("Sprite_left/Label_name"):GetComponent("UILabel").text = v1["clanA_info"]["clan_name"]
+                lteMatchItem.transform:Find("Sprite_right/Label_name"):GetComponent("UILabel").text = v1["clanB_info"]["clan_name"]
+            end
+
+            -- 设置标题锚点
+            if tonumber(k1) == 1 then
+                local titleAnchor = curTableWeek.transform:GetComponent("UIWidget")
+                titleAnchor:SetAnchor(lteMatchItem)
+                titleAnchor.leftAnchor:Set(0, 0)
+                titleAnchor.rightAnchor:Set(0, 629)
+                titleAnchor.topAnchor:Set(1, 48)
+                titleAnchor.bottomAnchor:Set(1, 20)
+            end
+
+            -- 判断订阅状态
+            -- 已订阅
+            local subcribe = lteMatchItem.transform:Find("Btn_subcribe").gameObject
+            local isSubcribe = lteMatchItem.transform:Find("Btn_isSubcribe").gameObject
+            subcribe:SetActive(false)
+            isSubcribe:SetActive(false)
+            local actInfo = MatchCenterDataManager.GetActivityInfo()
+            local curTime = os.time()
+            if  actInfo["differenceTime"] then curTime = os.time() + actInfo["differenceTime"] end
+            if tonumber(v1['is_subscirbe']) == 1 and tonumber(v1["start_time"]) > tonumber(curTime) then
+                score.gameObject:SetActive(true)
+                score1.gameObject:SetActive(false)
+                if tonumber(v1['user_subscribe']) == 1 then -- 已订阅
+                    subcribe:SetActive(false)
+                    isSubcribe:SetActive(true)
+                else -- 未订阅
+                    subcribe:SetActive(true)
+                    isSubcribe:SetActive(false)
+                end
+                self.buttonFunctionMap[subcribe] = function()
+                    Common.PlaySound('9901')    --播放音效
+                    self:OnSubcribeBtnClick(v1['contest_id'], v1['subcontest_id'], lteMatchItem,v1)
+                    MatchCenterReport.ClickBookScheduleBtn(v1['contest_id'], v1['subcontest_id'], v1['contest_name'])
+                end
+
+                self.buttonFunctionMap[isSubcribe] = function()
+                    Common.PlaySound('9901')    --播放音效
+                    self:OnCancleSubcribeBtnClick(v1['contest_id'], v1['subcontest_id'], lteMatchItem,v1)
+                end
+            else
+                score.gameObject:SetActive(false)
+                score1.gameObject:SetActive(true)
+            end
+
+
+        end
+        self:DestroyChild(curTableMatch,#settleMatchTable[v])
+        if #settleMatchTable[v] > 3 then
+            curTableWeek.transform:Find("Sprite_bigBg").gameObject:SetActive(true)
+            curTableWeek.transform:Find("Sprite_litBg").gameObject:SetActive(false)
+        else
+            curTableWeek.transform:Find("Sprite_bigBg").gameObject:SetActive(false)
+            curTableWeek.transform:Find("Sprite_litBg").gameObject:SetActive(true)
+        end
+
+    end
+    self:DestroyChild(self.tableWeek,tabLength)
+    self:DestroyChild(self.tableMatch,tabLength)
+    self.tableWeek:GetComponent("UITable"):Reposition()
+    self.tableMatch:GetComponent("UITable"):Reposition()
+    self.scrollViewMatch:GetComponent("UIScrollView"):ResetPosition()
+    self:AddEvents()
+
+    LuaTimer.Add(200,function()
+        if not self.isRender then
+            self.isRender = true
+            self.gameObject:SetActive(true)
+        end
+        self.tableWeek:GetComponent("UITable"):Reposition()
+        self.tableMatch:GetComponent("UITable"):Reposition()
+        self.scrollViewMatch:GetComponent("UIScrollView"):ResetPosition()
+    end)
+
+end
+
+-- 销毁多余子物体
+function mt:DestroyChild(childParent,needCount)
+    local childCount = childParent.transform.childCount
+    if tonumber(childCount) <= tonumber(needCount) then
+        return Logger.DEBUG("子物体数量不需要销毁")
+    end
+
+    for index = childCount -1 ,needCount, -1 do
+        local curChildCount = childParent.transform.childCount
+        if tonumber(curChildCount) <= 3 then
+            Logger.DEBUG("schedule隐藏子物体")
+            childParent.transform:GetChild(index).gameObject:SetActive(false)
+        else
+            Logger.DEBUG("schedule 同步销毁子物体")
+            UnityEngine.GameObject.DestroyImmediate(childParent.transform:GetChild(index).gameObject)
+        end
+    end
+end
+
+
+
+
+
+
+-------------amz add--------------------
+function mt:InitScheduleProcessImage(refresh)
+    local processImage=MatchCenterDataManager.GetScheduleImage()
+    if processImage~=nil then
+        if processImage~=nil then
+            Common.CacheImage("http:"..processImage);
+        end
+        local processSpriteCallBackFct=function()
+            self.hasLoadProcessImage=1
+            if refresh then
+                self:SetImageSite()
+            end
+        end 
+        Common.ShowImage(MatchCenterSetting.PanelName,"http:"..processImage,self.scheduleTexture,false,processSpriteCallBackFct)
+    else
+        if not refresh then
+            self.scheduleProcessEntrance:SetActive(false)
+        end
+        Logger.ERROR("无配置赛事进度图")
+    end
+end
+
+function mt:AddEvents()
+    for button, response in pairs(self.buttonFunctionMap) do
+        if button ~= nil and button.gameObject ~= nil  and Slua.IsNull(button) == false then
+			UIEventListener.Get(button).onClick = response
+		end
+    end
+end
+
+function mt:RemoveEvents()
+    for button, response in pairs(self.buttonFunctionMap) do
+		if button ~= nil and button.gameObject ~= nil  and Slua.IsNull(button) == false then
+			UIEventListener.Get(button).onClick = nil
+		end
+	end
+	self.buttonFunctionMap = {};
+end
+
+
+function mt:SetImageSite()
+    if self.hasLoadProcessImage==1 then
+        self.scheduleTexture:GetComponent("UITexture"):MakePixelPerfect()
+        local siteOnProcessImage=MatchCenterDataManager.GetScheduleImageSite()
+        local imageHeight=self.scheduleTexture:GetComponent("UIWidget").height
+        local everyPartHeight=575
+        if siteOnProcessImage==0 or siteOnProcessImage==1 then
+            self.scheduleTextureGrid.transform.localPosition=UnityEngine.Vector3(0,285,0)
+        else
+            self.scheduleTextureGrid.transform.localPosition=UnityEngine.Vector3(0,285+everyPartHeight*(siteOnProcessImage-1),0)
+        end
+        --self.hasSetImageSite=1
+    end
+end
+-----------------------------------------------
+
+function mt:SetItemInfo(item, v)
+    item.transform:Find("Container_header/Sprite_title/Label").gameObject:GetComponent("UILabel").text = self:FormatTimeToDate(v['start_time'])
+    item.transform:Find("Container_body/Label_time").gameObject:GetComponent("UILabel").text = self:FormatTimeToTime(v['start_time'])
+    item.transform:Find("Container_body/Label_rule").gameObject:GetComponent("UILabel").text = v['stage']
+    item.transform:Find("Container_body/Label_title"):GetComponent("UILabel").text = v['contest_name']
+    -- local subcribeBtn = item.transform:Find("Container_header/Sprite_subcribe").gameObject:GetComponent("UIButton").gameObject
+    -- local isSubcribeBtn = item.transform:Find("Container_header/Sprite_isSubcribe").gameObject:GetComponent("UIButton").gameObject
+    local isSubcribeBtnObj = item.transform:Find("Container_header/Sprite_isSub").gameObject
+    local subcribeBtnObj = item.transform:Find("Container_header/Sprite_subcribe").gameObject
+    local isSubcribeBtn = isSubcribeBtnObj:GetComponent("UIButton").gameObject
+    local subcribeBtn = subcribeBtnObj:GetComponent("UIButton").gameObject
+    
+    isSubcribeBtnObj:SetActive(false)
+    subcribeBtnObj:SetActive(false)
+    -- 已订阅
+    if tonumber(v['is_subscirbe']) == 1 then
+        if tonumber(v['user_subscribe']) == 1 then
+            isSubcribeBtnObj:SetActive(true)
+            subcribeBtnObj:SetActive(false)
+        else
+            isSubcribeBtnObj:SetActive(false)
+            subcribeBtnObj:SetActive(true)
+            -- self.buttonFunctionMap[subcribeBtn] = function() 
+            --     self:OnSubcribeBtnClick(v['contest_id'], v['subcontest_id'], item) 
+            --     MatchCenterReport.ClickBookScheduleBtn(v['contest_id'], v['subcontest_id'], v['contest_name'])
+            -- end
+        end 
+
+        self.buttonFunctionMap[subcribeBtn] = function() 
+            Common.PlaySound('9901')    --播放音效
+            self:OnSubcribeBtnClick(v['contest_id'], v['subcontest_id'], item) 
+            MatchCenterReport.ClickBookScheduleBtn(v['contest_id'], v['subcontest_id'], v['contest_name'])
+        end
+
+        self.buttonFunctionMap[isSubcribeBtn] = function() 
+            Common.PlaySound('9901')    --播放音效
+            Logger.DEBUG("1111111111111111111111111")
+            self:OnCancleSubcribeBtnClick(v['contest_id'], v['subcontest_id'], item) 
+            -- MatchCenterReport.ClickBookScheduleBtn(v['contest_id'], v['subcontest_id'], v['contest_name'])
+        end
+    end
+
+   
+
+
+  
+    local pvp = item.transform:Find("Container_body/Container_pvp").gameObject
+    local pve = item.transform:Find("Container_body/Container_pve").gameObject
+    pvp:SetActive(false)
+    pve:SetActive(false)
+    if tonumber(v['m_type']) == 1 then -- 战队对阵
+
+    elseif tonumber(v['m_type']) == 2 then -- 选手对阵
+        pvp:SetActive(true)
+        pve:SetActive(false)
+        Common.ShowImage(MatchCenterSetting.PanelName, v['clanA_info']['clan_logo'], pvp.transform:Find('Texture_player1').gameObject, false)
+        Common.ShowImage(MatchCenterSetting.PanelName, v['clanB_info']['clan_logo'], pvp.transform:Find('Texture_player2').gameObject, false)
+        pvp.transform:Find("Label_player1").gameObject:GetComponent("UILabel").text = v['clanA_info']['clan_name']
+        pvp.transform:Find("Label_player2").gameObject:GetComponent("UILabel").text = v['clanB_info']['clan_name']
+    elseif tonumber(v['m_type']) == 3 then -- 非对阵
+        pvp:SetActive(false)
+        pve:SetActive(true)
+        pve.transform:Find("Label_title").gameObject:GetComponent("UILabel").text = v['m_desc']
+    end
+
+end
+
+function mt:OnSubcribeBtnClick(contestId, subId, itemObj,subscribe)
+    local successHandler = function() self:subcribeSuccessCallback(itemObj,subscribe) end
+    local failedHandler = function() self:subcribeFailedCallback(itemObj) end
+    MatchCenterRequestHandler.SubscribeMatch(contestId, subId, successHandler, failedHandler)
+end
+
+
+function mt:OnCancleSubcribeBtnClick(contestId, subId, itemObj,subscribe)
+    local successHandler = function() self:subcribeFailedCallback(itemObj,subscribe) end
+    local failedHandler = function() self:subcribeSuccessCallback(itemObj) end
+    MatchCenterRequestHandler.CancleSubscribeMatch(contestId, subId, successHandler, failedHandler)
+end
+
+
+
+function mt:subcribeSuccessCallback(itemObj,subscribe)
+    if subscribe then
+        subscribe['user_subscribe'] = "1"
+    end
+    itemObj.transform:Find("Btn_subcribe").gameObject:SetActive(false)
+    itemObj.transform:Find("Btn_isSubcribe").gameObject:SetActive(true)
+end
+
+function mt:subcribeFailedCallback(itemObj,subscribe)
+    if subscribe then
+        subscribe['user_subscribe'] = "0"
+    end
+    itemObj.transform:Find("Btn_subcribe").gameObject:SetActive(true)
+    itemObj.transform:Find("Btn_isSubcribe").gameObject:SetActive(false)
+end
+
+function mt:SetActive(flag)
+    if flag then
+        if not self.isRender then
+            self:Render()
+        else
+            self.gameObject:SetActive(true)
+        end
+        MatchCenterReport.ClickScheduleTab()
+    else
+        self.gameObject:SetActive(false)
+    end
+end
+
+
+function mt:Destroy()
+    self:RemoveEvents()
+    for k, _ in pairs(self) do
+		self[k] = nil
+    end 
+end
+
+
+return mt

@@ -1,0 +1,161 @@
+require ("Common")
+
+local MatchCenterSetting        = require("MatchCenterSetting")
+local MatchCenterRequestHandler = require("MatchCenterRequestHandler")
+local MatchCenterEvent          = require("MatchCenterEvent")
+local MatchCenterDataManager    = require("MatchCenterDataManager")
+local MatchCenterTools          = require("MatchCenterTools")
+local MatchCenterReport         = require("MatchCenterReport")
+local MatchCenterHotWord        = require("MatchCenterHotWord")
+local mt = {}
+
+function mt:New()
+    local o = {}
+    setmetatable(o, mt)
+    self.__index = self
+    return o
+end
+
+function mt:Init(gameObject)
+    self.gameObject = gameObject
+    self.transform  = self.gameObject.transform
+    self.textList = self.transform:Find("Container_chatArea/Label_chatArea").gameObject:GetComponent("UITextList")
+    self.textListLabel = self.transform:Find("Container_chatArea/Label_chatArea").gameObject:GetComponent("UILabel")
+    self.inputLabel = self.transform:Find("Container_inputArea/Sprite_input").gameObject:GetComponent("UILabel")
+    self.inputComponent = self.transform:Find("Container_inputArea/Sprite_input").gameObject:GetComponent("UIInput")
+    self.sendButton = self.transform:Find("Container_inputArea/Sprite_send").gameObject:GetComponent("UIButton")
+
+    -- 热词相关
+    self.hotWordComponent   = MatchCenterHotWord:New()
+    self.hotWordComponent:Init(self.transform:Find("Container_inputArea/Container_hotList").gameObject)
+    self.hotWordBtn         = self.transform:Find("Container_inputArea/Sprite_hotWord").gameObject:GetComponent("UIButton")
+    self.pointer         = self.transform:Find("Container_inputArea/Sprite_hotWord/Sprite_pointer").gameObject
+
+    self.chatBuffer = {}
+    self.isFillContent = false
+    self.textList:Add("[a0a0a0]官方倡导绿色直播，请文明观赛，拒绝低俗言论，对任何传播违法、低俗涉黄、暴力等不良信息将进行封禁处理[-]")
+    self:AddEvents()
+end
+
+function mt:AddEvents()
+
+    EventDelegate.Add(self.sendButton.onClick, function() self:OnSendButtonClick() end)
+    -- 点击热词
+    EventDelegate.Add(self.hotWordBtn.onClick, function()
+        Common.PlaySound('9929')    --播放音效
+        self.hotWordComponent:SetActive(true)
+        self.pointer.transform.rotation=UnityEngine.Quaternion.Euler(0,0,0)
+    end)
+
+    self.timerId = LuaTimer.Add(0, 50, function()
+            local b = table.remove(self.chatBuffer, 1)
+            if b then
+                self:UpdateChatContent(b)
+            end
+    end)
+end
+
+
+
+function mt:RemoveEvents()
+    self.sendButton.onClick.Clear()
+    self.hotWordBtn.onClick.Clear()
+
+    if self.timerId then
+        LuaTimer.Delete(self.timerId)
+    end
+end
+
+
+function mt:UpdateChatContent(text)
+    if self.textListLabel.printedSize.y > 370 and not self.isFillContent then
+        self.textList.style = 1
+        self.textList.scrollValue = 1
+        self.isFillContent = true
+    end
+    self.textList:Add(text)
+end
+
+
+function mt:AddChatContentToBuffer(data)
+    if #self.chatBuffer < 200 then
+        if data['nickName'] == MatchCenterSetting.AdminName and string.find(data['barrageInfo'], MatchCenterSetting.SystemBulletFormat) then 
+            local text = "火影办公室：" .. string.sub(data['barrageInfo'], MatchCenterSetting.SystemBulletFlagLength + 1)
+            text = string.format("[%s]%s[-]", MatchCenterSetting.SystemBulletColor, text)
+            table.insert(self.chatBuffer, text)
+        elseif data['nickName'] == MatchCenterSetting.SystemBulletNickname then
+            local text = "火影办公室：" .. data['barrageInfo']
+            text = string.format("[%s]%s[-]", MatchCenterSetting.SystemBulletColor, text)
+            table.insert(self.chatBuffer, text)
+        else -- 默认样式
+            data['nickName'] = MatchCenterTools.SubStringUTF8(data['nickName'], 1, 8)
+            data['nickName'] = string.gsub(data['nickName'], "%[.%]", "")
+            data['barrageInfo'] = MatchCenterTools.SubStringUTF8(data['barrageInfo'], 1, 40)
+            data['barrageInfo'] =  string.gsub(data['barrageInfo'], "%[.%]", "")
+            --local text = string.format("[%s]%s[-]：[%s]%s[-]", "ffcc00", data['nickName'], "ffffff", data['barrageInfo'])
+            local text = string.format("[%s]%s[-]：[%s]%s[-]", "dcac51", data['nickName'], "8da5ce", data['barrageInfo'])
+            table.insert(self.chatBuffer, text)
+        end
+    end
+end
+
+
+function mt:OnSendButtonClick()
+    Common.PlaySound('9901')    --播放音效
+    if not MatchCenterDataManager.IsAllowBullet() then
+        MatchCenterSetting.NoticeGameShowTips("弹幕系统维护中")
+        return
+    end
+    local text = self.inputLabel.text
+    text = (text:gsub("^%s*(.-)%s*$", "%1"))
+    if #text == 0 or text == "请输入" or text == "输入聊天内容" then
+        MatchCenterSetting.NoticeGameShowTips("内容不能为空")
+        return
+    end 
+    local roomInfo = MatchCenterDataManager.GetRoomInfo()
+    local anchorId, livePlatId = MatchCenterDataManager.GetAnchorIdAndLivePlatId()
+    local nickName =  MatchCenterDataManager.GetNickName()
+    MatchCenterRequestHandler.SendBullet(anchorId, livePlatId, roomInfo['roomInfo']['pid'], text, nickName)
+    self.inputLabel.text = ''
+    self.inputComponent.value = ''
+    MatchCenterReport.ClickSendBulletBtn()
+end
+
+
+function mt:Clear()
+    self.textList:Clear()
+end
+
+
+-- function mt:SetLotteryEntranceActive(flag)
+--     self.lotteryEntranceObj:SetActive(flag)
+-- end
+
+-- function mt:SetLotteryRed(flag)
+--     self.lotteryEntranceRed:SetActive(flag)
+-- end
+
+-- function mt:SetLotteryEntranceText(text)
+--     self.lotteryEntranceText.text = text
+-- end
+
+function mt:SetActive(flag)
+    self.gameObject:SetActive(flag)
+    if flag then
+        MatchCenterReport.ClickChatTab()
+    end
+end
+
+
+function mt:Destroy()
+    self:RemoveEvents()
+    
+    self.hotWordComponent:Destroy()
+    for k, _ in pairs(self) do
+		self[k] = nil
+    end 
+    
+end
+
+
+return mt

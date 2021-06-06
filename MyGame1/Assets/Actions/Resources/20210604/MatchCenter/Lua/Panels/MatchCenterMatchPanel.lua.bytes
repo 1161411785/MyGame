@@ -1,0 +1,972 @@
+require "Common"
+require "JsonManager"
+require "EventDispatcher"
+
+
+local MatchCenterVideoPlayer 		= require("MatchCenterVideoPlayer")
+local MatchCenterChat 				= require("MatchCenterChat")
+local MatchCenterSchedule 			= require("MatchCenterSchedule")
+--local MatchCenterTask 				= require("MatchCenterTask")
+local MatchCenterTaskAward 				= require("MatchCenterTaskAward")
+local MatchCenterMoreLive 				= require("MatchCenterMoreLive")
+---------amz add---------
+local MatchCenterFansBox 			= require("MatchCenterFansBox")
+local MatchCenterFeedback           =require("MatchCenterFeedback")
+-------------------------
+local MatchCenterRequestHandler 	= require("MatchCenterRequestHandler")
+local MatchCenterResponseHandler 	= require("MatchCenterResponseHandler")
+local MatchCenterDataManager 		= require("MatchCenterDataManager")
+local MatchCenterEvent 				= require("MatchCenterEvent")
+local MatchCenterReport 			= require("MatchCenterReport")
+local Logger 						= Common.GetLogger()
+local mt 							= {}
+local UserData						= Common.GetUserData()
+function mt:New(o)
+	o = o or {}
+	setmetatable(o, self)
+	self.__index = self
+	return o
+end
+
+
+function mt:Init(gameObject, jumpParams)
+	self.root = gameObject
+	self.gameObject = gameObject.transform:Find("Container_match").gameObject;
+	self.transform  = self.gameObject.transform;
+	self.anchorId, self.livePlatId = MatchCenterDataManager.GetAnchorIdAndLivePlatId()
+
+	self.components = {}
+	self.bulletBuff = {}
+	self.is4G = false
+	self.isFullScreen = false
+	self.isFirstEnter = true
+	self.requestTaskTimer = nil
+
+	self.webSocketState = -1
+	
+	-- 跳转参数，跳转聊天，赛程，任务
+
+	Common.TablePrinter(jumpParams, '2222', '3333');
+
+
+	self.jumpModule = nil
+	if jumpParams ~= nil and jumpParams[1] == 'match' and jumpParams[2] ~= nil then
+		self.jumpModule = jumpParams[2]
+	end
+
+	self:InitVideoPlayer()
+	self:InitFullScreenVideoPlayer()
+	self:InitLeftArea()
+	self:InitRightArea()
+	self:InitWebSocket()
+	self:AddEvents()
+	-- 拉取数据  房间信息 & 赛程信息 & 任务信息
+	-- MatchCenterRequestHandler.RefreshRoomInfo(1, self.anchorId, self.livePlatId)
+	-- MatchCenterRequestHandler.RefreshActivityInfo()
+	MatchCenterRequestHandler.GetContestList(MatchCenterDataManager.GetContestIds(),MatchCenterResponseHandler.OnReceiveContestList)
+	---------amz add----
+	self:InitTimingRoom()
+	MatchCenterRequestHandler.GetMatchPlayersList({"14","2","11","25","1","20","15","16"})     --获取选手信息
+	---------------------
+	----------------test-----------------
+	local gameEnv=MatchCenterDataManager.GetGameVer()
+	Logger.DEBUG("获取到的游戏版本号："..tostring(gameEnv))
+	-----------------end---------------------
+end
+
+
+function mt:InitVideoPlayer()
+	self.videoPlayer = MatchCenterVideoPlayer:New()
+	self.videoPlayer:Init(self.gameObject.transform:Find("Container_left/Container_normalScreen").gameObject)
+	-- 打开全屏
+	self.videoPlayer.switchFullScreenCallback = function() self:SwitchFullScreen(false) end
+
+	local roomTitle = self.transform:Find("Container_left/Container_normalScreen/Container_title/Label_title"):GetComponent("UILabel")
+	self.videoPlayer:RegisterTitle(roomTitle)
+	local viewPeople = self.transform:Find("Container_left/Container_normalScreen/Container_title/Sprite_people_icon/Label_personNum"):GetComponent("UILabel")
+	self.videoPlayer:RegisterViewPeople(viewPeople)
+	----------------------amz add-------------------------------
+	--直播状态
+	local videoStatus=self.transform:Find("Container_left/Container_normalScreen/Container_title/Sprite_liveStatus"):GetComponent("UISprite")
+	self.videoPlayer:RegisterVedioStatus(videoStatus)
+	----------------------------------------------------------
+	table.insert(self.components, self.videoPlayer)
+end
+
+function mt:InitFullScreenVideoPlayer()
+	self.fullScreenVideoPlayer = MatchCenterVideoPlayer:New()
+	self.fullScreenVideoPlayer:Init(self.gameObject.transform:Find("Container_left/Container_fullScreen").gameObject)
+	-- 退出全屏
+	self.fullScreenVideoPlayer.switchFullScreenCallback = function() self:SwitchFullScreen(true) end
+
+	local roomTitle = self.transform:Find("Container_left/Container_fullScreen/Container_header/Label_matchName"):GetComponent("UILabel")
+	self.fullScreenVideoPlayer:RegisterTitle(roomTitle)
+	local viewPeople = self.transform:Find("Container_left/Container_fullScreen/Container_header/Sprite_people_icon/Label_personNum"):GetComponent("UILabel")
+	self.fullScreenVideoPlayer:RegisterViewPeople(viewPeople)
+	----------------------amz add-------------------------------
+	--直播状态
+	local videoStatus=self.transform:Find("Container_left/Container_fullScreen/Container_header/Sprite_liveStatus"):GetComponent("UISprite")
+	self.fullScreenVideoPlayer:RegisterVedioStatus(videoStatus)
+	----------------------------------------------------------
+	table.insert(self.components, self.fullScreenVideoPlayer)
+end
+
+function mt:InitLeftArea()
+	self.leftArea = self.root.transform:Find("Container_navigation").gameObject
+	----------amz add----------------------------
+	self:InitFeedbackComponent()
+	self:InitTaskAwardComponent()
+	self:InitMoreLiveComponent()
+	----------------------------------------------
+end
+
+
+function  mt:InitRightArea()
+	self.rightArea = self.transform:Find("Container_right").gameObject
+	self:InitChatComponent()
+	self:InitScheduleComponent()
+	--self:InitTaskComponent()
+	---------------------amz add-------
+	self:InitFansBoxComponent()
+	-----------------------------------
+	self:InitToggle()
+	self:InitLotteryEntrance()
+	--- gyqguo add
+	self:InitjumpAppley()
+	---
+end
+
+
+
+function mt:InitToggle()
+	---------------amz add---------------
+	self.fansBoxButton = self.transform:Find("Container_right/Container_header/Container_threeTab/Toggle_fansBox").gameObject:GetComponent("UIButton")
+	-------------------------------------
+	local threeTabContainer=self.transform:Find("Container_right/Container_header/Container_threeTab").gameObject
+	local twoTabContainer=self.transform:Find("Container_right/Container_header/Container_twoTab").gameObject
+	local activityInfo = MatchCenterDataManager.GetActivityInfo()
+	local fansBoxTime = activityInfo['baseInfo']['matchFansBoxTime']
+	local hasFansBox=false            --test 临时自测设置为true，应为false*****************************
+	if fansBoxTime~=nil then
+		if tonumber(os.time()) >= tonumber(fansBoxTime[1]) and tonumber(os.time()) <= tonumber(fansBoxTime[2]) then
+			-- 非粉丝包厢时间
+			hasFansBox=true
+		else
+			hasFansBox=false
+		end
+	end
+	--hasFansBox=true            --test 临时自测设置为true，应没有这句*********************************
+	if hasFansBox then
+		threeTabContainer:SetActive(true)
+		twoTabContainer:SetActive(false)
+		self.chatButton = self.transform:Find("Container_right/Container_header/Container_threeTab/Toggle_chat").gameObject:GetComponent("UIButton")
+		self.scheduleButton = self.transform:Find("Container_right/Container_header/Container_threeTab/Toggle_schedule").gameObject:GetComponent("UIButton")
+	else
+		threeTabContainer:SetActive(false)
+		twoTabContainer:SetActive(true)
+		self.chatButton = self.transform:Find("Container_right/Container_header/Container_twoTab/Toggle_chat").gameObject:GetComponent("UIButton")
+		self.scheduleButton = self.transform:Find("Container_right/Container_header/Container_twoTab/Toggle_schedule").gameObject:GetComponent("UIButton")
+	end
+end
+
+
+function mt:SwitchToggle(tab)
+	Logger.DEBUG("******@@@@@@*******"..tab)
+	self.chatComponent:SetActive(tab == "chat")
+	self.scheduleComponent:SetActive(tab == "schedule")
+	---------amz add--------------
+	self.fansBoxComponent:SetActive(tab == "fansBox")
+	local threeTabContainer=self.transform:Find("Container_right/Container_header/Container_threeTab").gameObject
+	local twoTabContainer=self.transform:Find("Container_right/Container_header/Container_twoTab").gameObject
+	if threeTabContainer.activeInHierarchy then
+		self.transform:Find("Container_right/Container_header/Container_threeTab/Toggle_" .. tab).gameObject:GetComponent("UIToggle").value = true
+	else
+		self.transform:Find("Container_right/Container_header/Container_twoTab/Toggle_" .. tab).gameObject:GetComponent("UIToggle").value = true
+	end
+	-- 当前tab判断，1:包厢，0：大厅
+	local currentTab=0
+	if tab == "fansBox" then
+		currentTab=1
+	else
+		currentTab=0
+	end
+	EventDispatcher.DispatchEvent(MatchCenterEvent.GetCurrentTab,currentTab)
+	------------------------------
+	--self.transform:Find("Container_right/Container_header/Toggle_" .. tab).gameObject:GetComponent("UIToggle").value = true
+
+	-- 优化 刷新任务列表
+	-- if self.requestTaskTimer == nil then
+	-- 	MatchCenterRequestHandler.GetTaskList()
+	-- 	self.requestTaskTimer = LuaTimer.Add(5000, function()
+	-- 		LuaTimer.Delete(self.requestTaskTimer)
+	-- 		self.requestTaskTimer = nil
+	-- 	end)
+	-- end
+
+end
+
+-- 用于从任务模块调转回来
+function mt:SwitchToggleByEvent(tab)
+	local threeTabContainer=self.transform:Find("Container_right/Container_header/Container_threeTab").gameObject
+	local twoTabContainer=self.transform:Find("Container_right/Container_header/Container_twoTab").gameObject
+	if threeTabContainer.activeInHierarchy then
+		self.transform:Find("Container_right/Container_header/Container_threeTab/Toggle_" .. tab).gameObject:GetComponent("UIToggle").value = true
+	else
+		self.transform:Find("Container_right/Container_header/Container_twoTab/Toggle_" .. tab).gameObject:GetComponent("UIToggle").value = true
+	end
+	self:SwitchToggle(tab)
+end
+
+-- 聊天模块
+function mt:InitChatComponent()
+	self.chatComponent = MatchCenterChat:New()
+	self.chatComponent:Init(self.gameObject.transform:Find("Container_right/Container_body/Container_body_chat").gameObject)
+	table.insert(self.components, self.chatComponent)
+end
+
+
+
+
+-- 活动入口控制
+--------------amz add--------------
+-- 粉丝包厢
+function mt:InitFansBoxComponent()
+	self.fansBoxComponent = MatchCenterFansBox:New()
+	self.fansBoxComponent:Init(self.gameObject.transform:Find("Container_right/Container_body/Container_body_fansBox").gameObject)
+	table.insert(self.components, self.fansBoxComponent)
+end
+
+--反馈模块
+function mt:InitFeedbackComponent()
+	self.feedbackComponent = MatchCenterFeedback:New()
+	self.feedbackComponent:Init(self.root.transform:Find("Container_popup/Container_feedback").gameObject)
+	table.insert(self.components, self.feedbackComponent)
+	self.feedbackBtn=self.gameObject.transform:Find("Container_left/Container_normalScreen/Container_bottm/Sprite_feedback/Label_btn"):GetComponent("UIButton")
+end
+
+-- 更多直播
+function mt:InitMoreLiveComponent()
+	self.moreLiveComponent = MatchCenterMoreLive:New()
+	self.moreLiveComponent:Init(self.root.transform:Find("Container_popup/Container_moreLive").gameObject)
+	table.insert(self.components, self.moreLiveComponent)
+	self.moreLiveBtn=self.gameObject.transform:Find("Container_left/Container_normalScreen/Container_title/Btn_moreLive"):GetComponent("UIButton")
+end
+
+-- 赛程模块
+function mt:InitScheduleComponent()
+	self.scheduleComponent = MatchCenterSchedule:New()
+	self.scheduleComponent:Init(self.root.transform:Find("Container_popup/Container_schedule").gameObject)
+	table.insert(self.components, self.scheduleComponent)
+end
+
+--迁移任务奖励  签到、观赛领奖
+function mt:InitTaskAwardComponent()
+	self.taskComponent = MatchCenterTaskAward:New()
+	self.taskComponent:Init(self.root.transform:Find("Container_popup/Container_taskAward").gameObject)
+	table.insert(self.components, self.taskComponent)
+	--self.root.transform:Find("Container_popup/Container_taskAward").gameObject
+	self.taskAwardBtn=self.root.transform:Find("Container_popup/Container_actionIcon/Btn_award"):GetComponent("UIButton")
+	self.taskRedPoint = self.root.transform:Find("Container_popup/Container_actionIcon/Btn_award/Sprite_red").gameObject
+	self.taskCountDown = self.root.transform:Find("Container_popup/Container_actionIcon/Btn_award/Label_countDown").gameObject
+	self.taskAwardBtn.gameObject:SetActive(false)
+	self.taskRedPoint.gameObject:SetActive(false)
+	self.taskCountDown.gameObject:SetActive(false)
+	-- 添加按钮点击事件
+	if self.taskAwardBtn.onClick then
+		self.taskAwardBtn.onClick.Clear()
+	end
+	EventDelegate.Add(self.taskAwardBtn.onClick, function()
+		Common.PlaySound('9929')    --播放音效
+		self.taskComponent:SetActive(true)
+		MatchCenterRequestHandler.GetTaskAwardList(function()
+			-- 重新走一遍入口展示逻辑
+			self:RenderTaskAwardIcon(MatchCenterDataManager.GetTaskInfo())
+			-- 刷新奖励页面
+			self.taskComponent:Render(MatchCenterDataManager.GetTaskInfo())
+		end)
+	end)
+	EventDispatcher.AddEventListener(MatchCenterEvent.SwitchTabToH5, self.SwitchTabToH5, self)
+
+	-- 任务奖励入口显示控制
+	local taskInfo = MatchCenterDataManager.GetTaskInfo()
+	-- 任务数据异常，不展示入口
+	if not taskInfo then
+		self.taskAwardBtn.gameObject:SetActive(false)
+		MatchCenterRequestHandler.GetTaskAwardList(function()
+			-- 重新走一遍展示逻辑
+			self:RenderTaskAwardIcon(MatchCenterDataManager.GetTaskInfo())
+		end)
+		return
+	end
+	self:RenderTaskAwardIcon(taskInfo)
+end
+
+-- 奖励icon页面展示逻辑
+function mt:RenderTaskAwardIcon(taskInfo)
+
+	-- 如果有可领取奖励展示入口及红点
+	if taskInfo["redPoint"] and tonumber(taskInfo["redPoint"]) > 0 then
+		self.taskAwardBtn.gameObject:SetActive(true)
+		self.taskRedPoint.gameObject:SetActive(true)
+		self.taskCountDown.gameObject:SetActive(false)
+	else
+		self.taskAwardBtn.gameObject:SetActive(false)
+		self.taskRedPoint.gameObject:SetActive(false)
+		self.taskCountDown.gameObject:SetActive(false)
+	end
+
+	-- 2.如果有最近观赛时长任务展示入口并展示倒计时，隐藏红点
+	local activityInfo = MatchCenterDataManager.GetActivityInfo()
+	local curTime = os.time()
+	if activityInfo["differenceTime"] then curTime = os.time() + activityInfo["differenceTime"] end
+	local hour = os.date("%H",curTime)
+
+	-- 有观赛任务数据 展示入口 -- 隐藏红点 -- 展示倒计时
+	-- if taskInfo["taskList"] and tonumber(hour) >= 18 then
+	if taskInfo["taskList"] then
+		self.taskAwardBtn.gameObject:SetActive(true)
+		self.taskCountDown.gameObject:SetActive(true)
+
+		local countDown = 0
+		local curProgress = tonumber(taskInfo["taskList"][4]["taskData"]["progress"])
+		local target1 = tonumber(taskInfo["taskList"][1]["taskData"]["target"])
+		local target2 = tonumber(taskInfo["taskList"][2]["taskData"]["target"])
+		local target3 = tonumber(taskInfo["taskList"][3]["taskData"]["target"])
+		local target4 = tonumber(taskInfo["taskList"][4]["taskData"]["target"])
+		if curProgress <= target1 then
+			countDown = target1 - curProgress
+		elseif target1 < curProgress and curProgress <= target2 then
+			countDown = target2 - curProgress
+		elseif target2 < curProgress and curProgress <= target3 then
+			countDown = target3 - curProgress
+		elseif target3 < curProgress and curProgress <= target4 then
+			countDown = target4 - curProgress
+		end
+		self:AwardCountDown(70)
+	end
+
+end
+
+-- 签到/观赛奖励 倒计时
+function mt:AwardCountDown(countDown)
+	if self.AwardTimer then
+		LuaTimer.Delete(self.AwardTimer)
+		self.AwardTimer = nil
+	end
+	self.AwardTimer = LuaTimer.Add(0,1000,function()
+		-- 判断当前视频播放状态
+		if countDown <= 0 then
+			self.taskCountDown.gameObject:SetActive(false)
+			self.taskRedPoint.gameObject:SetActive(true)
+			LuaTimer.Delete(self.AwardTimer)
+			self.AwardTimer = nil
+		else
+
+			countDown = countDown -1
+			self.taskCountDown.transform:GetComponent("UILabel").text = os.date("%M:%S",countDown)
+		end
+	end)
+
+end
+
+
+-- 跳转虎牙小程序
+function mt:InitjumpAppley()
+	if not self.gameObject then return end
+	self.jumpAppleyObj = self.root.transform:Find("Container_popup/Container_actionIcon").gameObject
+	self.jumpAppleyBtn = self.jumpAppleyObj.transform:Find("Btn_jumpAppley"):GetComponent("UIButton")
+	self.jumpAppleyRed = self.jumpAppleyObj.transform:Find("Btn_jumpAppley/Sprite_red").gameObject
+	-- 管理端数据
+	local activityInfo = MatchCenterDataManager.GetActivityInfo()
+	local jumpAppleyTime = activityInfo['baseInfo']['jumpAppletTime']
+	if not jumpAppleyTime or jumpAppleyTime == "" then
+		jumpAppleyTime = {1620558000,1620575999}
+	end
+	-- 校验服务器与本地时间差值
+	local difference = 0
+	local timestamp = activityInfo['timestamp'] -- 服务器时间
+	if timestamp and timestamp ~= "" then
+		difference = tonumber(timestamp) - os.time()
+		if difference >= -3 and difference <= 3 then difference = 0 end
+	end
+	local curTime = os.time() + difference -- 校准后的当前时间
+	local remainingTime = tonumber(jumpAppleyTime[1]) - curTime -- 入口剩余开启时间
+
+	-- 如果当前时间和入口可显示时间在同一天，则动态检测是否展示入口否则返回（不需要关闭打开页面）
+	if tonumber(os.date("%Y%m%d",curTime)) < tonumber(os.date("%Y%m%d",jumpAppleyTime[1])) or tonumber(os.date("%Y%m%d",curTime)) > tonumber(os.date("%Y%m%d",jumpAppleyTime[2])) then
+		self.jumpAppleyBtn.gameObject:SetActive(false)
+		Logger.DEBUG("未达到入口开启日期，不展示/刷新跳转小程序入口")
+		return
+	end
+	if self.jumpAppleyTimer then
+		LuaTimer.Delete(self.jumpAppleyTimer)
+		self.jumpAppleyTimer = nil
+	end
+	self.jumpAppleyTimer = LuaTimer.Add(0,3000,function()
+		if tonumber(remainingTime) > 0 then
+			Logger.DEBUG("小程序跳转入口剩余开启时间...."..tostring(remainingTime))
+			remainingTime = tonumber(remainingTime) - 3
+		else
+			if self.jumpAppleyTimer then
+				LuaTimer.Delete(self.jumpAppleyTimer)
+				self.jumpAppleyTimer = nil
+			end
+			curTime = os.time() + difference
+			local Countdown = tonumber(jumpAppleyTime[2]) - curTime -- 入口倒计时
+			if tonumber(curTime) < tonumber(jumpAppleyTime[1]) or tonumber(curTime) > tonumber(jumpAppleyTime[2]) then --在入口展示时间范围
+				self.jumpAppleyBtn.gameObject:SetActive(false)
+				Logger.DEBUG("入口展示时间已过期")
+				return
+			end
+
+			-- 入口红点逻辑
+			self.jumpAppletCookieName = "MatchjumpApplet_" .. UserData.sOpenId .. "_" .. UserData.sRoleId
+			local cookieContent = Common.ReadCookie(self.jumpAppletCookieName)
+			if cookieContent and cookieContent ~= "" and cookieContent == os.date("%Y%m%d",os.time()) then
+				self.jumpAppleyRed:SetActive(false)
+				self.jumpAppleyBtn.transform:GetComponent("Animator").enabled = false
+			else
+				self.jumpAppleyRed:SetActive(true)
+				self.jumpAppleyBtn.transform:GetComponent("Animator").enabled = true
+			end
+			self.jumpAppleyBtn.gameObject:SetActive(true)
+			--
+			self.jumpAppleyTimer = LuaTimer.Add(0,1000,function()
+				if Countdown > 0 then
+					Countdown = Countdown - 1
+					Logger.DEBUG("倒计时剩余"..tostring(Countdown))
+				else
+					self.jumpAppleyBtn.gameObject:SetActive(false)
+					Logger.DEBUG("倒计时结束，关闭小程序跳转入口")
+					MatchCenterDataManager.UpdateServerTime(tonumber(jumpAppleyTime[2]) + 5)
+					if self.jumpAppleyTimer then
+						LuaTimer.Delete(self.jumpAppleyTimer)
+						self.jumpAppleyTimer = nil
+					end
+				end
+
+			end)
+
+		end
+
+	end)
+end
+
+-- 跳转虎牙小程序
+function mt:OnJumpAppletClick()
+	local cookieContent = Common.ReadCookie(self.jumpAppletCookieName)
+	if cookieContent and cookieContent ~= "" and cookieContent == os.date("%Y%m%d",os.time()) then
+		-- 今日红点已记录
+		Logger.DEBUG("今日红点已记录，不需要写入")
+	else
+		-- 今日红点无记录 需写入
+		Common.WriteCookie(self.jumpAppletCookieName, os.date("%Y%m%d",os.time()))
+		self.jumpAppleyBtn.transform:GetComponent("Animator").enabled = false
+		self.jumpAppleyBtn.transform.rotation = UnityEngine.Quaternion.Euler(0,0,0)
+	end
+
+	self.jumpAppleyRed:SetActive(false)
+	if string.lower(UserData.sAcountType) == "qq" then
+		local param={}
+		param['type'] = 'launchQQMiniProgram'
+		param['openWay'] = "0"
+		param['url'] = "https://m.q.qq.com/a/p/1108314714?s=pages%2Fmain%2FliveRoom%2Findex%3Froomid%3D660148%26source%3Dhybs"
+		Common.CallGameByTable(param)
+		return
+	end
+	local param={}
+	param['type'] = 'launchWXMiniProgram'
+	param['userName'] = "gh_6c12d488491e"  -- 拉起的小程序的username
+	param['path'] = "/pages/main/liveRoom/index?roomid=660148&source=huoyinghd"
+	param['miniprogramType'] = "0" --可选择打开0正式版 1开发板 2体验版小程序
+	Common.CallGameByTable(param)
+end
+
+-- 天选之子入口
+function mt:InitLotteryEntrance()
+	self.lotteryEntranceObj = self.root.transform:Find("Container_popup/Container_actionIcon/Btn_drawLottery").gameObject
+	self.lotteryEntranceBtn = self.lotteryEntranceObj.transform:GetComponent("UIButton")
+	self.lotteryEntranceRed = self.root.transform:Find("Container_popup/Container_actionIcon/Btn_drawLottery/Sprite_red").gameObject
+end
+
+
+-----------------------------------
+
+-- 初始化web socket
+function mt:InitWebSocket()
+	self.bulletWebSocket = self.root:GetComponent("BulletWebSocket")
+	self:StartWebSocket()
+end
+
+function mt:AddEvents()
+
+	EventDispatcher.AddEventListener(MatchCenterEvent.SwitchTabToH5, self.SwitchTabToH5, self)
+
+	EventDispatcher.AddEventListener(MatchCenterEvent.SwitchToggle, self.SwitchToggleByEvent, self)
+
+	EventDispatcher.AddEventListener(MatchCenterEvent.UpdateTaskRedPoint, self.UpdateTaskRedPoint, self)
+
+	EventDispatcher.AddEventListener(MatchCenterEvent.UpdateViewPeople, self.UpdateViewPeople, self)
+
+	EventDispatcher.AddEventListener(MatchCenterEvent.OnAppPause, self.OnAppPause, self)
+
+	EventDispatcher.AddEventListener(MatchCenterEvent.OnNoticeMatchLottery, self.RefreshMatchLotteryInfo, self)
+
+	-----------------amz add------------------
+	EventDispatcher.AddEventListener(MatchCenterEvent.HasRefreshRoomInfo, self.RefreshVideoInfo, self)
+	--- gyqguo add
+	EventDispatcher.AddEventListener(MatchCenterEvent.UpdateServerTime, self.InitjumpAppley, self)
+	EventDispatcher.AddEventListener(MatchCenterEvent.UpdatePlayerStatus, self.InitjumpAppley, self)
+
+	------------------------------------------
+
+	self.handleReceiveBullet = function(json) 
+		self:HandleReceiveBullet(json) 
+	end
+	self.bulletWebSocket.onBulletEvent:AddListener(self.handleReceiveBullet)
+
+	self.handleWebSocketEvent = function(json) self:HandleWebSocketEvent(json) end
+	self.bulletWebSocket.webSocketEvent:AddListener(self.handleWebSocketEvent)
+
+	EventDelegate.Add(self.chatButton.onClick, function() 
+		Common.PlaySound('9916')    --播放音效
+		self:SwitchToggle("chat") 
+	end)
+	EventDelegate.Add(self.scheduleButton.onClick, function() 
+		Common.PlaySound('9916')    --播放音效
+		self:SwitchToggle("schedule") 
+	end)
+	EventDelegate.Add(self.lotteryEntranceBtn.onClick, function() 
+		Common.PlaySound('9916')    --播放音效
+		self:OnLotteryEntranceClick() 
+	end)
+	-------------amz add---------------------
+	EventDelegate.Add(self.fansBoxButton.onClick, function() 
+		Common.PlaySound('9916')    --播放音效
+		self:SwitchToggle("fansBox") 
+	end)
+	EventDelegate.Add(self.feedbackBtn.onClick, function() 
+		Common.PlaySound('9929')    --播放音效
+		self:OnFeedbackBtnClick() 
+	end)
+
+	-------------gyq add---------------------
+	EventDelegate.Add(self.moreLiveBtn.onClick, function() 
+		Common.PlaySound('9916')    --播放音效
+		self:OnMoveLiveBtnClick() 
+	end)
+
+	-----------------------------------------
+	--- gyqguo add
+	EventDelegate.Add(self.jumpAppleyBtn.onClick, function()
+		Common.PlaySound('9916')    --播放音效
+		self:OnJumpAppletClick()
+	end)
+	---
+end
+
+function mt:RemoveEvents()
+	EventDispatcher.RemoveEventListener(MatchCenterEvent.SwitchTabToH5, self.SwitchTabToH5)
+	EventDispatcher.RemoveEventListener(MatchCenterEvent.SwitchToggle, self.SwitchToggleByEvent)
+	EventDispatcher.RemoveEventListener(MatchCenterEvent.UpdateTaskRedPoint, self.UpdateTaskRedPoint)
+	EventDispatcher.RemoveEventListener(MatchCenterEvent.UpdateViewPeople, self.UpdateViewPeople)
+	EventDispatcher.RemoveEventListener(MatchCenterEvent.OnAppPause, self.OnAppPause)
+	EventDispatcher.RemoveEventListener(MatchCenterEvent.OnNoticeMatchLottery, self.RefreshMatchLotteryInfo)
+	-------------amz add-------------
+	EventDispatcher.RemoveEventListener(MatchCenterEvent.HasRefreshRoomInfo, self.RefreshVideoInfo)
+	--- gqyguo
+	EventDispatcher.RemoveEventListener(MatchCenterEvent.UpdateServerTime, self.InitjumpAppley)
+	--------------------------------
+	self.bulletWebSocket.onBulletEvent:RemoveListener(self.handleReceiveBullet)
+	self.bulletWebSocket.webSocketEvent:RemoveListener(self.handleWebSocketEvent)
+
+	self.chatButton.onClick.Clear()
+	self.scheduleButton.onClick.Clear()
+	self.lotteryEntranceBtn.onClick.Clear()
+	-------------------------amz add---------------
+	self.fansBoxButton.onClick.Clear()
+	self.feedbackBtn.onClick.Clear()
+	self.taskAwardBtn.onClick.Clear()
+	self.moreLiveBtn.onClick.Clear()
+	-----------------------------------------------
+	--- gyqguo
+	self.jumpAppleyBtn.onClick.Clear()
+	---
+	if self.socketCheckTimer ~= nil then
+		LuaTimer.Delete(self.socketCheckTimer)
+	end
+
+	if self.requestTaskTimer  ~= nil then
+		LuaTimer.Delete(self.requestTaskTimer)
+	end
+end
+
+
+-- 首次进入大厅触发
+function mt:EnterHall()
+	if not MatchCenterSettings.enablePlayVideo then
+		return
+	end
+	Logger.DEBUG("Test 7")
+	-- 首次进入,判断网络类型 1 4G  2 wifi
+	local networkType = UnityEngine.Application.internetReachability
+	if tonumber(networkType) ~= 2 then -- 4g
+		self.videoPlayer:RefreshInfoFor4G()
+		self.videoPlayer:ShowPauseMask4G()
+		self.videoPlayer:ShowHeaderAndFooter(false)
+		self.is4G = true
+	else
+		self.videoPlayer:RefreshInfo()
+		self.is4G = false
+	end
+	self.videoPlayer:StartBullet()
+	self.isFullScreen = false
+
+	if self.jumpModule ~= nil then
+		self:SwitchToggle(self.jumpModule)
+		self.jumpModule = nil
+	else
+		self:SwitchToggle("chat")
+	end
+
+end
+
+-- app切出消息 避免crash
+function mt:OnAppPause(params)
+	-- 在观赛大厅才处理该事件
+	if  MatchCenterDataManager.isHall then
+		if params.arg1 == "1" then -- 切出
+			self.bulletWebSocket:CloseWebSocket()
+			Logger.DEBUG("app out , close web socket")
+		elseif params.arg1 == "0" then -- 切回
+			-- self.bulletWebSocket:StartWebSocket(self.livePlatId, self.anchorId)
+			self:StartWebSocket()
+			Logger.DEBUG("app in , open web socket")
+		end
+	end
+end
+
+
+-- 控制面板的显示隐藏
+
+-- 全屏弹幕不会触发此操作
+
+function mt:SetActive(flag)
+	self.gameObject:SetActive(flag)
+	if flag then
+		--MatchCenterSettings.NoticeGameSwitchBgm(false)   --test
+		if self.isFirstEnter then
+			if not MatchCenterDataManager.IsGetRoomInfo() then
+				return
+			else
+				LuaTimer.Add(10, function()
+					self:EnterHall()
+					self.isFirstEnter = false
+				end)
+			end
+		else
+			self:StartWebSocket()
+		end
+		MatchCenterDataManager.isHall = true
+		self:RefreshMatchLotteryInfo()
+	else
+		-- 页面切出
+
+		if self.is4G then
+			--显示
+			self.videoPlayer:Stop()
+			-- self.videoPlayer:RefreshPlayerState()
+
+			self.videoPlayer:ShowPauseMask4G()
+			
+		else
+			--直播暂停
+			self.videoPlayer:Pause()
+			self.videoPlayer:RefreshPlayerState()
+		end
+		--弹幕暂停
+		self.videoPlayer:StopBullet()
+		self.videoPlayer:RefreshBulletState()
+		-- 释放聊天区资源
+		-- self.chatComponent:Clear()
+		self.bulletWebSocket:CloseWebSocket()
+		MatchCenterDataManager.isHall = false
+	end
+end
+
+
+function mt:SwitchTabToH5()
+	self:SetActive(false)
+end
+
+
+function mt:UpdateTaskRedPoint()
+	local red = MatchCenterDataManager.GetTaskRedPoint()
+	self.taskRedPoint:SetActive(red > 0)
+	if EventDispatcher.HasEventListener(MatchCenterEvent.UpdateNavigationRedPoint)  then
+        EventDispatcher.DispatchEvent(MatchCenterEvent.UpdateNavigationRedPoint)
+    end
+end
+
+
+function mt:UpdateViewPeople()
+	local viewPeople = MatchCenterDataManager.GetViewPeople()
+	self.fullScreenVideoPlayer:UpdateViewPeople(viewPeople)
+	self.videoPlayer:UpdateViewPeople(viewPeople)
+end
+
+
+-- 全屏模式切换
+function mt:SwitchFullScreen(isFullScreen)
+	if isFullScreen then
+		-- 退出全屏
+		Logger.DEBUG("退出全屏")
+		self.isFullScreen = false
+		self.fullScreenVideoPlayer:ClearVideoContainer()
+		self.fullScreenVideoPlayer:StopBullet()
+		self.fullScreenVideoPlayer.gameObject:SetActive(false)
+		self.videoPlayer.gameObject:SetActive(true)
+
+		self.videoPlayer:StartBullet()
+		self.videoPlayer:RefreshInfo()
+		self.videoPlayer:ShowControllerArea()
+		-- self.chatComponent:Clear()
+		self.leftArea:SetActive(true)
+		self.rightArea:SetActive(true)
+		MatchCenterReport.ClickExitFullScreenBtn()
+	else
+		-- 打开全屏
+		Logger.DEBUG("打开全屏")
+		-------------------------------------
+		self.isFullScreen = true
+		self.videoPlayer:ClearVideoContainer()
+		self.videoPlayer:StopBullet()
+		self.videoPlayer.gameObject:SetActive(false)
+		self.fullScreenVideoPlayer.gameObject:SetActive(true)
+		self.fullScreenVideoPlayer:StartBullet()	
+		self.fullScreenVideoPlayer:RefreshInfo()
+		self.fullScreenVideoPlayer:ShowControllerArea()
+		-- self.chatComponent:Clear()
+		-- 为了解决任务区域道具层级过高的场景
+		self.leftArea:SetActive(false)
+		self.rightArea:SetActive(false)
+		MatchCenterReport.ClickFullScreenBtn()
+		
+	end
+end
+
+
+--------------------amz add------------------
+function mt:HandleReceiveBullet(json)
+	--Logger.DEBUG("*********************"..json)
+	if not MatchCenterDataManager.IsAllowBullet() then
+        return
+	end
+	local bullet = self:FilterBullet(json)
+	if bullet then
+		if self.isFullScreen then
+			self.fullScreenVideoPlayer:AddBulletToScreen(bullet)
+		else
+			--todo
+			local hasBindId=MatchCenterDataManager.IsHasBindBox()
+			local boxBindId=MatchCenterDataManager.GetBoxBindId()
+			
+			if bullet['ext']['fansBoxId']~=nil and tonumber(bullet['ext']['fansBoxId'])~=nil then
+				if tonumber(bullet['ext']['fansBoxId'])==boxBindId then
+					self.videoPlayer:AddBulletToScreen(bullet)
+					self.fansBoxComponent:AddChatContentToBuffer(bullet)
+				end
+			else
+				self.videoPlayer:AddBulletToScreen(bullet)
+				self.chatComponent:AddChatContentToBuffer(bullet)
+			end
+			
+		end
+		if UserData.sOpenId == MatchCenterSettings.SystemReportOpenId then
+			Common.Report("", MatchCenterSettings.TNMIDReceiveBullet, 0)
+		end
+	end
+end
+--------------------------------------------------
+
+
+function mt:HandleWebSocketEvent(json)
+	local data = JsonManager.DecodeJson(json)
+	-------------amz add-----------
+	if data==nil then
+		Logger.ERROR("data is nil")
+		return
+	end
+	-------------------------------
+	if data['eventType'] ~= nil and data['code'] ~= nil then
+		if data['eventType'] == "closed" then
+			Common.Report(json, MatchCenterSettings.TNMIDWebSocketBroke, 2)
+		end
+		if data['eventType'] == "closed" and data['code'] == "1006" then
+			self:StartWebSocket()
+			Common.Report("websocket重连", MatchCenterSettings.TNMIDSocketReconnect, 0)
+		else
+		end
+	end
+end
+
+
+function mt:StartWebSocket()
+	Logger.DEBUG("Start Web Socket")
+	self.bulletWebSocket:StartWebSocket(self.livePlatId, self.anchorId)
+	-- -- -- -- 判断socket是否断开，避免crash
+	-- if self.socketCheckTimer ~= nil then
+	-- 	LuaTimer.Delete(self.socketCheckTimer)
+	-- end
+	-- self.bulletWebSocketType = self.bulletWebSocket:GetType()
+	-- self.bulletWebSocketFieldInfo = self.bulletWebSocketType:GetField("webSocket", 32+4)
+	-- self.socketCheckTimer = LuaTimer.Add(100, 100 ,function()
+	-- 	local websocketInstance = self.bulletWebSocketFieldInfo:GetValue(self.bulletWebSocket)
+	-- 	if websocketInstance ~= nil and self.bulletWebSocket ~= nil then
+	-- 		local websocketFieldInfo = websocketInstance:GetType():GetField("_readyState", 32+4)
+	-- 		local state = websocketFieldInfo:GetValue(websocketInstance)
+	-- 		local sendHeartBeatFieldInfo = self.bulletWebSocketType:GetField("sendHeartBeat", 32+4)
+	-- 		if tonumber(state) ~= 1 then
+	-- 			sendHeartBeatFieldInfo:SetValue(self.bulletWebSocket, false)
+	-- 		else
+	-- 			sendHeartBeatFieldInfo:SetValue(self.bulletWebSocket, true)
+	-- 		end
+	-- 	end
+	-- end)
+
+end
+
+-- 过滤弹幕
+function mt:FilterBullet(json)
+	Logger.DEBUG("receive bullet:" .. json)
+	local bullet = JsonManager.DecodeJson(json)
+	if bullet == nil then  -- 收到特殊字符,json decode报错
+		return false
+	end
+	local nickName = tostring(bullet['nickName'])
+	local content = tostring(bullet['barrageInfo'])
+
+	if content == nil or content == "" then
+		return false
+	else
+		return bullet
+	end
+end
+
+
+function mt:RefreshMatchLotteryInfo()
+	local lotteryInfo = MatchCenterDataManager.GetMatchLotteryInfo()
+	self.lotteryEntranceObj:SetActive(lotteryInfo.showEntrance)
+	self.lotteryEntranceRed:SetActive(lotteryInfo.showEntranceRedPoint)
+	--self.lotteryEntranceImg.spriteName = "lottery_entrance_" .. tostring(lotteryInfo.entranceStatus)
+	if EventDispatcher.HasEventListener(MatchCenterEvent.UpdateNavigationRedPoint)  then
+		EventDispatcher.DispatchEvent(MatchCenterEvent.UpdateNavigationRedPoint)
+	end
+end
+
+-- 天选之子入口点击
+function mt:OnLotteryEntranceClick()
+	MatchCenterSettings.NoticeOpenMatchLottery()
+	MatchCenterReport.ClickLotteryEntrance()
+end
+
+
+------------------------------amz add---------------
+local EnterTimingflag=0
+local OutTimingflag=0
+-- 定时直播处理
+function mt:InitTimingRoom()
+	local timingStartTime,timingEndTime=MatchCenterDataManager.GetTimingVideoTime()
+	if timingStartTime==nil or timingEndTime==nil then
+		return
+	end
+	LuaTimer.Add(0,1000,function()
+		local currentTime=os.time()
+		if currentTime>= timingStartTime and currentTime<= timingEndTime then
+			if EnterTimingflag==0 then
+				Logger.DEBUG("定时直播范围！！！！！！！！！！！！！！！！！")
+				self.bulletWebSocket:CloseWebSocket()  --关闭弹幕
+				self.anchorId, self.livePlatId = MatchCenterDataManager.GetAnchorIdAndLivePlatId() --刷新直播平台和房间
+				MatchCenterRequestHandler.RefreshActivityInfo() --刷新直播视频播放
+				self:StartWebSocket() --开启弹幕
+				EnterTimingflag=1
+				OutTimingflag=0
+			end
+		else
+			if OutTimingflag==0 then
+				Logger.DEBUG("非定时直播范围！！！！！！！！！！！！！！！！！")
+				self.bulletWebSocket:CloseWebSocket()  --关闭弹幕
+				self.anchorId, self.livePlatId = MatchCenterDataManager.GetAnchorIdAndLivePlatId() --刷新直播平台和房间
+				MatchCenterRequestHandler.RefreshActivityInfo() --刷新直播视频播放
+				self:StartWebSocket() --开启弹幕
+				OutTimingflag=1
+			end
+		end
+	end)
+end
+
+function mt:RefreshVideoInfo()
+	--self.videoPlayer:RefreshInfo()
+	self:EnterHall()
+end
+
+function mt:OnFeedbackBtnClick()
+	self.feedbackComponent:SetActive(true)
+end
+
+
+function mt:OnMoveLiveBtnClick()
+	self.moreLiveBtn.transform:Find("Sprite_pointer").rotation=UnityEngine.Quaternion.Euler(0,0,180)
+	self.moreLiveComponent:SetActive(true)
+end
+
+---------------------------------------------------
+
+-- 处理跳转事件
+function mt:HandleJump(jumpParams)
+	-- LuaTimer.Add()
+	local jumpTab = nil
+	if jumpParams ~= nil and jumpParams[1] == 'match' and jumpParams[2] ~= nil then
+		jumpTab = jumpParams[2]
+	end
+	Logger.DEBUG("++++++++++++668+++++++++++"..tostring(jumpTab))
+	if jumpTab ~= nil then
+		--self:SwitchToggle("chat")       --test
+		if jumpTab=="task" then
+			self.taskComponent:SetActive(true)
+		else
+			self:SwitchToggle(jumpTab)
+		end
+	end
+end
+
+-- 面板对象销毁
+-- 销毁在initPanel中声明的对象
+-- 统一声明，统一销毁，以防漏销导致内存泄漏
+function mt:Destroy()
+	Logger.DEBUG("destory matchPanel")
+	self:RemoveEvents()
+	self.videoPlayer:ClearVideoContainer()
+	self.fullScreenVideoPlayer:ClearVideoContainer()
+	self.bulletWebSocket:CloseWebSocket()
+
+	for _ , v in pairs(self.components) do 
+		v:Destroy()
+	end
+	---gyqguo add
+	if self.jumpAppleyTimer then
+		LuaTimer.Delete(self.jumpAppleyTimer)
+		self.jumpAppleyTimer = nil
+	end
+	---
+	for k, _ in pairs(self) do
+		self[k] = nil
+	end
+
+	-- 清理缓存
+    Common.ClearCache()
+    Common.UnloadUnusedAssets()
+end
+
+
+return mt

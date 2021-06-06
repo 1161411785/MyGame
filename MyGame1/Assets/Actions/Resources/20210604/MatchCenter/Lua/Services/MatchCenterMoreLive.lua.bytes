@@ -1,0 +1,157 @@
+local Logger = Common.GetLogger()
+local MatchCenterTools = require("MatchCenterTools")
+local MatchCenterRequestHandler = require("MatchCenterRequestHandler")
+local MatchCenterSetting = require("MatchCenterSetting")
+local mt = {}
+
+function mt:New()
+    local o = {}
+    setmetatable(o, mt)
+    self.__index = self
+    return o
+end
+
+function mt:Init(gameObject)
+    self.gameObject = gameObject
+    self.transform  = self.gameObject.transform
+
+    self.closeBtn = self.transform:Find("Sprite_maskClose"):GetComponent("UIButton").gameObject
+    self.scrollView = self.transform:Find("Scroll View").gameObject
+    self.grid = self.transform:Find("Scroll View/Grid").gameObject
+    self.template = self.transform:Find("Scroll View/Grid/Container_template").gameObject
+    self.buttonFunctionMap = {}
+    self.isRender = false
+
+end
+
+function mt:Render()
+    self.transform.parent.gameObject:SetActive(true)
+    self.buttonFunctionMap[self.closeBtn] = function()
+        Common.PlaySound('9907')    --播放音效
+        self.gameObject:SetActive(false)
+        self.transform.parent.parent:Find("Container_match/Container_left/Container_normalScreen/Container_title/Btn_moreLive/Sprite_pointer").rotation=UnityEngine.Quaternion.Euler(0,0,0)
+    end
+
+    local liveTab = {{"1560122354","huya","虎牙超影之巅大师赛","http://puui.qpic.cn/vpic/0/v3240mjhzym.png/0","重播"},
+    {"1560122354","huya","虎牙超影之巅大师赛","http://puui.qpic.cn/vpic/0/v3240mjhzym.png/0","重播"},
+    {"1602985","douyu","虎牙超影之巅大师赛","http://puui.qpic.cn/vpic/0/v3240mjhzym.png/0","直播"},
+    {"604174","douyu","虎牙超影之巅大师赛","http://puui.qpic.cn/vpic/0/v3240mjhzym.png/0","直播"}}
+
+    local lastSelectObj = nil
+    -- 获取所有房间信息 获取房间号，平台id 和房间id 直播状态，直播封面
+	local childCount = self.grid.transform.childCount
+	local length = 0
+    for k,v in pairs(liveTab) do
+        local item = nil
+        length = length + 1
+		if childCount >= length then
+			item = self.grid.transform:GetChild(length - 1)
+		else
+			item = UnityEngine.GameObject.Instantiate(self.template)
+		end
+		item.transform:SetParent(self.grid.transform, false)
+		item.gameObject:SetActive(true)
+		item.transform.localScale = UnityEngine.Vector3.one
+        local viewSelect = item.transform:Find("Sprite_viewSelect").gameObject
+        local selectMsg = item.transform:Find("Sprite_viewSelect/Label_selectMsg").gameObject
+        local tag = item.transform:Find("Sprite_tag").gameObject
+        viewSelect.gameObject:SetActive(false)
+        selectMsg.transform:GetComponent("UILabel").text = v[3]
+        item.transform:Find("Sprite_view/Label_normalMsg"):GetComponent("UILabel").text = v[3]
+        item.transform:Find("Sprite_tag/Label_msg"):GetComponent("UILabel").text = v[5]
+
+        local coverTexture = item.transform:Find("Sprite_view").gameObject
+        local coverTextureCallBack=function()
+            if coverTexture and coverTexture.gameObject then coverTexture.gameObject:SetActive(true) end
+            --coverTexture.transform:GetComponent("UITexture"):MakePixelPerfect();
+        end
+        Common.ShowImage(MatchCenterSetting.PanelName,v[4],coverTexture,false,coverTextureCallBack)
+
+
+
+        self.buttonFunctionMap[item.gameObject]=function()
+			Common.PlaySound('9916')    --播放音效
+            lastSelectObj:SetActive(false)
+            viewSelect:SetActive(true)
+            lastSelectObj = viewSelect
+            self.gameObject:SetActive(false)
+            MatchCenterRequestHandler.EnterRoom(0,  v[1], v[2])
+		end
+
+    end
+
+    self:DestroyChild(self.grid,length)
+    -- 默认展示首个直播
+    self.grid.transform:GetChild(0):Find("Sprite_viewSelect").gameObject:SetActive(true)
+    lastSelectObj = self.grid.transform:GetChild(0):Find("Sprite_viewSelect").gameObject
+
+    self.grid:GetComponent("UIGrid"):Reposition()
+	self.scrollView:GetComponent("UIScrollView"):ResetPosition()
+    -- 根据平台id 和房间id 批量请求直播流信息
+    self:AddEvents()
+end
+
+-- 销毁多余子物体
+function mt:DestroyChild(childParent,needCount)
+    local childCount = childParent.transform.childCount
+    if tonumber(childCount) <= tonumber(needCount) then
+        return Logger.DEBUG("子物体数量不需要销毁")
+    end
+
+    for index = childCount -1 ,needCount, -1 do
+        local curChildCount = childParent.transform.childCount
+        if tonumber(curChildCount) <= 4 then
+            Logger.DEBUG("schedule隐藏子物体")
+            childParent.transform:GetChild(index).gameObject:SetActive(false)
+        else
+            Logger.DEBUG("schedule 同步销毁子物体")
+            UnityEngine.GameObject.DestroyImmediate(childParent.transform:GetChild(index).gameObject)
+        end
+    end
+end
+
+function mt:AddEvents()
+    for button, response in pairs(self.buttonFunctionMap) do
+		if button ~= nil and button.gameObject ~= nil  and Slua.IsNull(button) == false then
+			UIEventListener.Get(button).onClick = response
+		end
+    end
+end
+
+function mt:RemoveEvents()
+    for button, response in pairs(self.buttonFunctionMap) do
+		if button ~= nil and button.gameObject ~= nil  and Slua.IsNull(button) == false then
+			UIEventListener.Get(button).onClick = nil;
+		end
+	end
+	self.buttonFunctionMap = {};
+end
+
+function mt:SetActive(flag)
+    -- if flag then
+    --     -- 显示 任务数据
+    --     local taskInfo = MatchCenterDataManager.GetTaskInfo()
+    --     if taskInfo == nil then 
+    --         MatchCenterSetting.NoticeGameShowTips("任务数据拉取异常，请稍后重试~")
+    --         return
+    --     end
+    --     self:Render(taskInfo)
+    --     MatchCenterReport.ClickTaskTab()
+    -- end
+
+    if flag and not self.isRender then
+        self:Render()
+        self.isRender = true
+    end
+    self.gameObject:SetActive(flag)
+
+end
+
+function mt:Destroy()
+    self:RemoveEvents()
+    for k, _ in pairs(self) do
+		self[k] = nil
+    end 
+end
+
+return mt

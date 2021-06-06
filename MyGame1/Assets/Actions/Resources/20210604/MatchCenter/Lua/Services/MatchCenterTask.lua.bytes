@@ -1,0 +1,232 @@
+require ("Common")
+
+local MatchCenterSetting = require("MatchCenterSetting")
+local MatchCenterRequestHandler = require("MatchCenterRequestHandler")
+local MatchCenterEvent   = require "MatchCenterEvent"
+local MatchCenterDataManager = require("MatchCenterDataManager")
+local MatchCenterReport = require("MatchCenterReport")
+
+local Logger = Common.GetLogger()
+
+
+local mt = {}
+
+function mt:New()
+    local o = {}
+    setmetatable(o, mt)
+    self.__index = self
+    return o
+end
+
+function mt:Init(gameObject)
+    self.gameObject = gameObject
+    self.transform  = self.gameObject.transform
+
+    self.template = self.transform:Find("Container_content/Container_task_template").gameObject
+    self.rewordTemplate = self.transform:Find("Container_content/Container_task_template/Container_body/Container_reword/Container_reword_template").gameObject
+    self.gridObj  = self.transform:Find("Container_content/Scroll View/Grid").gameObject
+    self.grid     = self.gridObj:GetComponent("UIGrid")
+    self.closeBtn = self.transform:Find("Sprite_menban"):GetComponent("UIButton").gameObject
+    self.taskItemTable = {}
+    self.taskRewordTable = {}
+    self.buttonFunctionMap = {}
+end
+
+function mt:AddEvents()
+    for button, response in pairs(self.buttonFunctionMap) do
+		if button ~= nil and button.gameObject ~= nil  and Slua.IsNull(button) == false then
+			UIEventListener.Get(button).onClick = response
+		end
+    end
+end
+
+function mt:RemoveEvents()
+    for button, response in pairs(self.buttonFunctionMap) do
+		if button ~= nil and button.gameObject ~= nil  and Slua.IsNull(button) == false then
+			UIEventListener.Get(button).onClick = nil;
+		end
+	end
+	self.buttonFunctionMap = {};
+end
+
+
+function mt:SetActive(flag)
+    if flag then
+        -- 显示 任务数据
+        local taskInfo = MatchCenterDataManager.GetTaskInfo()
+        if taskInfo == nil then 
+            MatchCenterSetting.NoticeGameShowTips("任务数据拉取异常，请稍后重试~")
+            return
+        end
+        self:Render(taskInfo)
+        MatchCenterReport.ClickTaskTab()
+    end
+    self.gameObject:SetActive(flag)
+end
+
+
+
+function mt:Render(taskInfo)
+    -- 先清理已存在的任务
+    if type(self.taskItemTable) == "table" and #self.taskItemTable > 0 then
+		for i = 1, #self.taskItemTable do
+			UnityEngine.GameObject.Destroy(self.taskItemTable[i].gameObject)
+		end
+    end
+    if type(self.taskRewordTable) == "table" and #self.taskRewordTable > 0 then
+		for i = 1, #self.taskRewordTable do
+			UnityEngine.GameObject.Destroy(self.taskRewordTable[i].gameObject)
+		end
+    end
+    self.taskItemTable = {}
+    self.taskRewordTable = {}
+    self:RemoveEvents()
+    for key, task in pairs(taskInfo) do 
+        local item = UnityEngine.GameObject.Instantiate(self.template)
+		item.name = "Container_task_" .. key
+        item.transform:SetParent(self.gridObj.transform)
+        item.transform.localScale = UnityEngine.Vector3.one
+        item.transform.localPosition = UnityEngine.Vector3(0, -110 * (key-1), 0)  --amz change -157 -> -110
+        item.gameObject:SetActive(true)
+
+        local taskName = tostring(task['name'])
+        
+        if task['taskData'] ~= nil then
+            if tonumber(task['taskData']['target']) < 60 then --弹幕任务
+                local suffix = string.format("([%s]%s[-])", "ffcc00", tostring(task['taskData']['progress']) .."/".. tostring(task['taskData']['target']))
+                taskName = taskName .. suffix
+            else -- 观赛任务
+                local suffix = string.format("([%s]%s[-])", "ffcc00", tostring(math.floor(task['taskData']['progress']/60)) .."/".. tostring(task['taskData']['target']/60))
+                taskName = taskName .. suffix
+            end
+        end
+        --item.transform:Find('Container_header/Sprite_title/Label_title'):GetComponent("UILabel").text = taskName
+        item.transform:Find('Label_taskName'):GetComponent("UILabel").text = taskName   --amz change
+        item.transform:Find("Sprite_bg_menban").gameObject:SetActive(key%2 ~= 0)        --amz change == -> ~=
+        -- 挂载道具
+        local rewordGridObj = item.transform:Find("Container_body/Container_reword/Scroll View/Grid").gameObject
+        
+        local rewordGrid = rewordGridObj:GetComponent("UIGrid")
+        for k, reword in pairs(task['rewords']['Item']) do
+            local rewordItem = UnityEngine.GameObject.Instantiate(self.rewordTemplate)
+            rewordItem.gameObject:SetActive(true)
+            rewordItem.name = "Container_reword_" .. k
+            rewordItem.transform:SetParent(rewordGridObj.transform)
+            --rewordItem.transform.localScale = UnityEngine.Vector3(0.77,0.77,1)
+            rewordItem.transform.localScale = UnityEngine.Vector3(1,1,1)
+            rewordItem.transform.localPosition = UnityEngine.Vector3(60* (k-1), 0, 0)
+            local rewordItemPath = Common.GetGameObjectPath(rewordItem.transform:Find("Sprite_reword").gameObject)
+            LuaTimer.Add(50, function()
+                MatchCenterSettings.NoticeGameShowItemIcon(reword['id'], reword['num'], rewordItemPath)
+            end)
+            table.insert(self.taskRewordTable, rewordItem)
+        end
+        rewordGrid:Reposition()
+        rewordGridObj.transform.localPosition=UnityEngine.Vector3(-64,0,0)  --amz add
+        -- 按钮状态
+        local qd = item.transform:Find("Container_body/Container_status/Container_qd").gameObject
+        local lq = item.transform:Find("Container_body/Container_status/Container_lq").gameObject
+        local ylq = item.transform:Find("Container_body/Container_status/Container_ylq").gameObject
+        local qw = item.transform:Find("Container_body/Container_status/Container_qw").gameObject
+        local wwc = item.transform:Find("Container_body/Container_status/Container_wwc").gameObject
+        qd:SetActive(false)
+        lq:SetActive(false)
+        ylq:SetActive(false)
+        qw:SetActive(false)
+        wwc:SetActive(false)
+        -- 0:已领奖 1：已完成未领奖 2：未完成
+        local status = tonumber(task['status'])
+        local taskId = tostring(task['id'])
+        -- if taskId == "6702" then -- 
+        --     item.transform:Find("Container_body/Label_desc"):GetComponent("UILabel").text = "提示：5月16日18点观看决赛得博人专属替身"
+        --     item.transform:Find("Container_body/Label_desc").gameObject:SetActive(true)
+        -- elseif taskId == "6703" then
+        --     item.transform:Find("Container_body/Label_desc"):GetComponent("UILabel").text = "提示：5月15日0点纲手[百豪]上线后可预览"
+        --     item.transform:Find("Container_body/Label_desc").gameObject:SetActive(true)
+        -- end
+
+        if status == 0 then 
+            ylq:SetActive(true)
+        elseif status == 1 then
+            if taskId == "dailySign" then
+                qd:SetActive(true)
+                self.buttonFunctionMap[item.transform:Find("Container_body/Container_status/Container_qd/Sprite"):GetComponent("UIButton").gameObject] = function()
+                    Common.PlaySound('9901')    --播放音效
+                    self:OnGetRewordButtonClick(taskId, item)
+                end
+            else 
+                lq:SetActive(true)
+                self.buttonFunctionMap[item.transform:Find("Container_body/Container_status/Container_lq/Sprite"):GetComponent("UIButton").gameObject] = function()
+                    Common.PlaySound('9901')    --播放音效
+                    self:OnGetRewordButtonClick(taskId, item)
+                end
+            end
+        elseif status == 2 then
+            -- if taskId == "6702" then -- 预约
+            --     qw:SetActive(true)
+            --     self.buttonFunctionMap[item.transform:Find("Container_body/Container_status/Container_qw/Sprite"):GetComponent("UIButton").gameObject] = function()
+            --         self:JumpToScheduleTab()
+            --     end
+            -- else
+            --     wwc:SetActive(true)
+            -- end 
+            wwc:SetActive(true)
+        end
+        table.insert(self.taskItemTable, item)
+    end
+    self.buttonFunctionMap[self.closeBtn]=function() 
+        Common.PlaySound('9907')    --播放音效
+        self:SetActive(false) 
+    end
+    self:AddEvents()
+end
+
+
+
+-- 领奖
+function mt:OnGetRewordButtonClick(taskId, item)
+    local successHandler = function()  self:GetRewordSuccessHandler(taskId, item) end
+    local failedHandler = function()  self:GetRewordFailedHandler(taskId, item) end
+    MatchCenterRequestHandler.GetTaskReword(taskId, successHandler, failedHandler)
+    -- MatchCenterSettings.NoticeGameShowLoading(1)
+    MatchCenterReport.ClickGetReword(taskId, 0)
+end
+
+
+function mt:GetRewordSuccessHandler(taskId, item)
+    -- MatchCenterSettings.NoticeGameShowLoading(0)
+    local qd    = item.transform:Find("Container_body/Container_status/Container_qd").gameObject
+    local lq    = item.transform:Find("Container_body/Container_status/Container_lq").gameObject
+    local ylq   = item.transform:Find("Container_body/Container_status/Container_ylq").gameObject
+    local qw    = item.transform:Find("Container_body/Container_status/Container_qw").gameObject
+    local wwc   = item.transform:Find("Container_body/Container_status/Container_wwc").gameObject
+    if tostring(taskId) == 'dailySign' then 
+        qd:SetActive(false)
+    else
+        lq:SetActive(false)
+    end
+    ylq:SetActive(true)
+    MatchCenterSetting.NoticeGameShowTips("领取成功，奖励已发到邮箱~")
+end
+
+function mt:GetRewordFailedHandler(taskId, item)
+    -- MatchCenterSettings.NoticeGameShowLoading(0)
+    Logger.DEBUG("task:" .. tostring(taskId) .. " get failed")
+    MatchCenterSetting.NoticeGameShowTips("奖励领取失败，请稍后再试~")
+end
+
+
+function mt:JumpToScheduleTab()
+    EventDispatcher.DispatchEvent(MatchCenterEvent.SwitchToggle, "schedule")
+end
+
+
+function mt:Destroy()
+    self:RemoveEvents()
+    for k, _ in pairs(self) do
+		self[k] = nil
+    end 
+end
+
+
+return mt
